@@ -165,6 +165,14 @@ class PackagerTests(unittest.TestCase):
             "  partition_name: system\n"
             "  file_name: images/system.img\n"
             "  is_download: true\n"
+            "- partition_index: SYS2\n"
+            "  partition_name: MBR\n"
+            "  file_name: MBR\n"
+            "  is_download: true\n"
+            "- partition_index: SYS3\n"
+            "  partition_name: EBR1\n"
+            "  file_name: EBR1\n"
+            "  is_download: true\n"
         ).encode("utf-8")
         write_zip(
             pruned,
@@ -174,6 +182,8 @@ class PackagerTests(unittest.TestCase):
                 ("images/", b"", DIR_MODE),
                 ("images/system.img", b"system", FILE_MODE),
                 ("images/unlisted.bin", b"extra", FILE_MODE),
+                ("MBR", b"mbr", FILE_MODE),
+                ("EBR1", b"ebr", FILE_MODE),
                 ("SP_Flash_Tool/leftover.exe", b"tool", FILE_MODE),
                 ("updater.png", b"icon", FILE_MODE),
                 ("rockbox_themes.txt", b"marker", FILE_MODE),
@@ -201,6 +211,8 @@ class PackagerTests(unittest.TestCase):
         self.assertIn("SP_Flash_Tool/boot.img", names)
         self.assertIn("SP_Flash_Tool/images/", names)
         self.assertIn("SP_Flash_Tool/images/system.img", names)
+        self.assertIn("SP_Flash_Tool/MBR", names)
+        self.assertIn("SP_Flash_Tool/EBR1", names)
         self.assertIn("SP_Flash_Tool/updater.png", names)
         self.assertIn("SP_Flash_Tool/rockbox_themes.txt", names)
         self.assertIn("SP_Flash_Tool/auth.auth", names)
@@ -223,6 +235,8 @@ class PackagerTests(unittest.TestCase):
         self.assertIn("Firmware/MT6572_Android_scatter.txt", mac_names)
         self.assertIn("Firmware/boot.img", mac_names)
         self.assertIn("Firmware/images/system.img", mac_names)
+        self.assertIn("Firmware/MBR", mac_names)
+        self.assertIn("Firmware/EBR1", mac_names)
         self.assertIn("Firmware/updater.png", mac_names)
         self.assertIn("Firmware/rockbox_themes.txt", mac_names)
         self.assertIn("Firmware/auth.auth", mac_names)

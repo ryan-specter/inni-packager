@@ -344,7 +344,9 @@ def _firmware_plan(
             plan.append((info.filename, rel, is_dir))
 
         if required:
-            missing = sorted(required - present)
+            missing = sorted(
+                name for name in required if name.lower() not in present
+            )
             if missing:
                 raise PackagingError(
                     f"{firmware.path.name} is missing scatter file(s): "
