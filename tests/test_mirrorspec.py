@@ -48,6 +48,7 @@ class ConfigTests(unittest.TestCase):
             {"name": "system.img", "size": 10},
             {"name": "com.innioasis.y1_2.1.9.apk", "size": 10},
             {"name": "source.tar.gz", "size": 10},
+            {"name": "Y2-Rockbox-V2.5-Source.zip", "size": 10},
         ]
         selected = [a["name"] for a in mirrorspec.select_firmware_assets(assets, self.cfg)]
         self.assertEqual(selected, ["rom.zip"])

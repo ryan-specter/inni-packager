@@ -61,6 +61,7 @@ DEFAULT_FIRMWARE_EXCLUDES = (
     "*-linux-arm64.zip",
     "*-macos.zip",
     "*portable*.zip",
+    "*source*.zip",
     "*installer*.zip",
     "*.dmg",
     "*.apk",
