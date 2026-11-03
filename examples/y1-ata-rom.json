@@ -1,0 +1,92 @@
+{
+  "source_repo": "y1-community/y1-ata-rom",
+  "mirror_repo": "",
+  "branch": "main",
+  "updater_repo": "y1-community/updater-ce-neo",
+  "title_prefix": "Portable Flashing Package: ",
+  "copy_original_assets": true,
+  "build_workers": 2,
+  "max_asset_bytes": 2147483648,
+  "firmware": {
+    "include": ["*.zip"],
+    "exclude": [
+      "*-windows.zip",
+      "*-windows-arm64.zip",
+      "*-linux.zip",
+      "*-linux-arm64.zip",
+      "*-macos.zip",
+      "*portable*.zip",
+      "*installer*.zip",
+      "*.dmg",
+      "*.apk",
+      "*.tar.gz",
+      "*.tgz",
+      "*.tar",
+      "*.sha256",
+      "*.json",
+      "*.txt",
+      "*.sig",
+      "*.img.gz",
+      "*.exe",
+      "*.appimage"
+    ],
+    "require_scatter": true
+  },
+  "releases": {
+    "include_prereleases": true,
+    "tags": [],
+    "exclude_tags": []
+  },
+  "defaults": {
+    "software_name": "Android 4.2 (Dev)",
+    "target_model": "Y1",
+    "target_type": "Type A",
+    "description": "Android 4.2 ATA ROM for Innioasis Y1."
+  },
+  "rules": [
+    {
+      "match_asset": "(?i)type[-_ ]?b",
+      "target_model": "Y1",
+      "target_type": "Type B"
+    }
+  ],
+  "platforms": {
+    "windows": {
+      "updater_asset": "UpdaterCE-Windows-Portable.zip",
+      "suffix": "-windows.zip",
+      "layout": "sp_flash_tool",
+      "os": "windows",
+      "arch": "x86-64"
+    },
+    "windows-arm64": {
+      "updater_asset": "UpdaterCE-Windows-Portable-arm64.zip",
+      "suffix": "-windows-arm64.zip",
+      "layout": "sp_flash_tool",
+      "os": "windows",
+      "arch": "arm64",
+      "optional": true
+    },
+    "linux": {
+      "updater_asset": "UpdaterCE-Linux-Portable.zip",
+      "suffix": "-linux.zip",
+      "layout": "sp_flash_tool",
+      "os": "linux",
+      "arch": "x86-64"
+    },
+    "linux-arm64": {
+      "updater_asset": "UpdaterCE-Linux-Portable-arm64.zip",
+      "suffix": "-linux-arm64.zip",
+      "layout": "sp_flash_tool",
+      "os": "linux",
+      "arch": "arm64",
+      "optional": true
+    },
+    "macos": {
+      "updater_asset": "Innioasis.Updater.for.Mac.zip",
+      "suffix": "-macos.zip",
+      "layout": "beside_app",
+      "os": "macos",
+      "arch": "universal"
+    }
+  }
+}

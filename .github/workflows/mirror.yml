@@ -1,0 +1,108 @@
+name: Portable flashing packages (standalone)
+
+# Manual fallback for a repository that owns its own mirror.config.json.
+# The y1-community/*-mirror repositories use the central reusable workflow
+# instead; this file is not scheduled there.
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: "Override source repository (owner/repo)"
+        required: false
+        type: string
+      tags:
+        description: "Comma-separated tag globs (e.g. 3.1.2,nightly-*)"
+        required: false
+        type: string
+      platforms:
+        description: "Comma-separated platforms (windows,linux,linux-arm64,macos)"
+        required: false
+        type: string
+      limit:
+        description: "Only mirror the N newest releases"
+        required: false
+        type: string
+      offset:
+        description: "Skip the N newest releases (batch backfill)"
+        required: false
+        type: string
+      force:
+        description: "Rebuild releases that are already current"
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: "Build locally without publishing"
+        required: false
+        type: boolean
+        default: false
+permissions:
+  contents: write
+
+concurrency:
+  group: portable-flashing-packages
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Check out the mirror
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test the packager
+        run: python -m unittest discover -s tests -v
+
+      - name: Mirror releases
+        env:
+          GH_TOKEN: ${{ secrets.MIRROR_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ secrets.MIRROR_TOKEN || github.token }}
+          SOURCE_REPO: ${{ inputs.source_repo }}
+          TAGS: ${{ inputs.tags }}
+          PLATFORMS: ${{ inputs.platforms }}
+          LIMIT: ${{ inputs.limit }}
+          OFFSET: ${{ inputs.offset }}
+          FORCE: ${{ inputs.force }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=(sync)
+          if [ -n "${SOURCE_REPO:-}" ]; then args+=(--source-repo "$SOURCE_REPO"); fi
+          if [ -n "${TAGS:-}" ]; then args+=(--tags "$TAGS"); fi
+          if [ -n "${PLATFORMS:-}" ]; then args+=(--platforms "$PLATFORMS"); fi
+          if [ -n "${LIMIT:-}" ]; then args+=(--limit "$LIMIT"); fi
+          if [ -n "${OFFSET:-}" ]; then args+=(--offset "$OFFSET"); fi
+          if [ "${FORCE:-false}" = "true" ]; then args+=(--force); fi
+          if [ "${DRY_RUN:-false}" = "true" ]; then args+=(--dry-run); fi
+          python tools/portable_mirror.py "${args[@]}"
+
+      - name: Commit the download index
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain -- index.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add index.json
+            git commit -m "Update portable package index"
+            git push || { git pull --rebase --autostash && git push; }
+          else
+            echo "index.json is unchanged"
+          fi
+
+      - name: Upload the mirror report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirror-report
+          path: mirror-report.json
+          if-no-files-found: ignore
+          retention-days: 14

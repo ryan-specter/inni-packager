@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Local build and run output
+dist/
+.work/
+mirror-report.json
+onboarding-report.json
+onboarding-plan.json
+
+# Freebuff workspace metadata
+.freebuff/
