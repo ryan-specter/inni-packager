@@ -50,10 +50,9 @@ Every mirror `index.json` contains:
 ```
 
 Use `source_title` and `source_notes`. Do not parse the mirror release body: it
-contains a provenance footer and a hidden `portable-mirror` block after the
-original notes. Older index entries created before this field existed may lack
-it; fetch the source release from `source_url` until the mirror backfill
-refreshes them.
+ends with an invisible `portable-mirror` block after the original notes. Older
+index entries created before this field existed may lack it; fetch the source
+release from `source_url` until the mirror backfill refreshes them.
 
 The site also keeps its existing `firmware-catalog.js` / manifest entries
 (`repo`, `packageName`, `post_install`, `post_install2`, model, version). The
@@ -300,8 +299,8 @@ Reject or strip:
 
 ## 9. Acceptance checklist
 
-- A release with `source_notes` renders the original Markdown, not the mirror
-  footer or hidden block.
+- A release with `source_notes` renders the original Markdown, not the mirror's
+  hidden build block.
 - “See more on GitHub” opens `source_url` in a new tab.
 - Windows x64, Windows arm64, Linux x64, Linux arm64 and macOS each resolve to
   the right portable asset; an unavailable platform falls back cleanly.

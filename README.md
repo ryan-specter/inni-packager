@@ -29,13 +29,13 @@ For a source release tagged `3.1.2` with `rom.zip`:
 | `rom-windows-arm64.zip` | Windows arm64 | same, built automatically once upstream publishes the arm64 app |
 | `rom-linux.zip` | Linux x86-64 | portable app + `SP_Flash_Tool/` firmware + `fw_package.ini` |
 | `rom-linux-arm64.zip` | Linux arm64 | same, automatic once upstream publishes the arm64 app |
-| `rom-macos.zip` | macOS (universal) | `.app` bundle + firmware files beside it + `fw_package.ini` |
+| `rom-macos.zip` | macOS (universal) | `Install Firmware.app` + `Firmware/` folder with the images and `fw_package.ini` |
 | `stats.txt` | all | cumulative source and mirror download figures |
 
 Release title: `Portable Flashing Package: <original title>`. The original
-notes are copied verbatim; a short provenance footer is appended on GitHub.
-The same original title and notes are stored in `index.json` as `source_title`
-and `source_notes`, so the site can render clean pages without the footer.
+notes are copied verbatim; no visible footer or extra text is added to the
+body. The same original title and notes are stored in `index.json` as
+`source_title` and `source_notes`.
 
 Each mirror also copies the source repository's files, excluding `.github`
 workflows and actions. The mirror keeps its own `mirror.config.json`, generated
@@ -58,10 +58,11 @@ files or enter firmware details.
 3. For each platform it picks the newest `updater-ce-neo` release that actually
    ships that platform's portable ZIP (releases are staggered upstream).
 4. The portable ZIP is streamed into a new ZIP at deflate level 9. macOS
-   symlinks, permission bits and timestamps are preserved; firmware files are
-   merged into `SP_Flash_Tool/` (or beside the `.app`). `history.ini` and
-   `fw_package.ini` are written so SP Flash Tool and Updater CE pick the right
-   scatter.
+   symlinks, permission bits and timestamps are preserved; the app is renamed
+   `Install Firmware.app` and the firmware goes into a neighbouring `Firmware/`
+   folder (on Windows/Linux it is merged into `SP_Flash_Tool/`). `history.ini`
+   and `fw_package.ini` are written so SP Flash Tool and Updater CE pick the
+   right scatter.
 5. A release with the same tag is created or updated in the mirror repository,
    and the assets are uploaded.
 6. `stats.txt` is written to every mirrored release, and the source README is
@@ -71,7 +72,7 @@ files or enter firmware details.
    portable assets. The website reads the index from `raw.githubusercontent.com`,
    avoiding GitHub API rate limits.
 
-Every mirror release body contains a hidden
+Every mirror release body ends with an invisible
 `<!-- portable-mirror:{...} -->` record with a fingerprint of its inputs. A
 later run skips the release when the source assets, config and Updater CE
 build are unchanged, so scheduled runs are cheap and idempotent. The moment
@@ -159,6 +160,24 @@ a long backfill does not accumulate files locally.
 
 `gh` is only needed for uploading and for private-repository downloads. Public
 repositories can be read without it.
+
+## Desktop app
+
+`tools/build_app.sh` builds `dist/Mirror Manager.app`, a universal2 (Intel and
+Apple silicon) Tkinter control panel for the mirrors. It reviews every mirror
+(source versus mirrored releases, new releases, changed files), dispatches
+`mirror.yml` on GitHub Actions, or runs the same packaging locally.
+
+Both refresh paths are non-destructive: existing releases are kept, missing
+assets are added, and a changed file replaces only that asset. Files whose size
+and SHA-256 already match are skipped, so repeated runs cost API calls rather
+than uploads. Local runs publish `index.json` and delete each mirror's
+downloads and builds when it finishes.
+
+The app needs the `gh` CLI, authenticated with push access to the mirrors. The
+build uses a universal2 interpreter (`/usr/bin/python3`, or set
+`PYTHON=/path/to/python3`), installs PyInstaller into `.build/venv-app`, and
+needs no administrator rights.
 
 ## Repository layout
 

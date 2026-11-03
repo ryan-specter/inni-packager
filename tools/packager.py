@@ -1,13 +1,19 @@
 """Repackage firmware zips inside an Innioasis Updater CE portable zip.
 
 The output keeps every entry of the portable application zip (including macOS
-symlinks and permission bits) and adds the contents of a firmware zip:
+symlinks and permission bits) and adds the selected scatter, the images it
+lists and an optional updater image from the firmware zip:
 
-* ``sp_flash_tool`` layout (Windows/Linux): firmware files go directly into the
-  portable's ``SP_Flash_Tool`` folder, a ``fw_package.ini`` is written beside
-  the scatter and ``history.ini`` is rewritten so SP Flash Tool preloads it.
-* ``beside_app`` layout (macOS): firmware files and ``fw_package.ini`` go next
-  to the ``.app`` bundle, which is where Updater CE looks on macOS.
+* ``sp_flash_tool`` layout (Windows/Linux): those firmware files go directly
+  into the portable's ``SP_Flash_Tool`` folder, a ``fw_package.ini`` is written
+  beside the scatter and ``history.ini`` is rewritten so SP Flash Tool preloads
+  it.
+* ``beside_app`` layout (macOS): the portable app is renamed
+  ``Install Firmware.app`` and the firmware plus ``fw_package.ini`` go into a
+  neighbouring ``Firmware`` folder.
+
+Surrounding files from the firmware zip, such as a bundled SP Flash Tool tree,
+are stripped; only what the scatter declares is needed.
 
 Everything is written with maximum deflate.  No file is buffered whole in
 memory; large partition images stream through a 1 MiB window.
@@ -16,6 +22,7 @@ memory; large partition images stream through a 1 MiB window.
 from __future__ import annotations
 
 import hashlib
+import plistlib
 import posixpath
 import re
 import shutil
@@ -23,13 +30,16 @@ import stat
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from mirrorspec import Platform, macos_readme
+from mirrorspec import Platform, drops_preserve_txt, macos_readme
 
 BUFFER_SIZE = 1024 * 1024
 COMPRESS_LEVEL = 9
 DRIVE_RE = re.compile(r"^[A-Za-z]:")
+MAC_APP_NAME = "Install Firmware.app"
+MAC_FIRMWARE_DIR = "Firmware"
+PACKAGE_IMAGE_NAMES = ("updater.png", "updater.jpg", "updater.jpeg")
 
 HISTORY_INI = (
     "[LastDAFilePath]\r\n"
@@ -139,7 +149,7 @@ def _copy_info(
         shutil.copyfileobj(reader, writer, BUFFER_SIZE)
 
 
-def inspect_firmware(path: Path) -> FirmwarePackage:
+def inspect_firmware(path: Path, source_repo: str = "") -> FirmwarePackage:
     """Find the scatter file and its folder inside a firmware zip."""
 
     try:
@@ -154,6 +164,10 @@ def inspect_firmware(path: Path) -> FirmwarePackage:
         if not n.endswith("/")
         and n.lower().endswith(".txt")
         and "scatter" in posixpath.basename(n).lower()
+    ]
+    # Preserve-data variants are alternative layouts, not the package scatter.
+    scatters = [
+        n for n in scatters if "preserve" not in posixpath.basename(n).lower()
     ]
     if not scatters:
         return FirmwarePackage(path, "", [], None, len(clean_names))
@@ -200,14 +214,73 @@ def _tool_layout(tool_zip: zipfile.ZipFile) -> Tuple[str, Optional[str]]:
     return ((sp_name + "/") if sp_name else "SP_Flash_Tool/"), app_name
 
 
+def _rename_bundle(name: str, old_root: str, new_root: str) -> str:
+    """Move every entry under the portable ``.app`` to its new bundle name."""
+
+    if name == old_root:
+        return new_root
+    if name == old_root + "/":
+        return new_root + "/"
+    if name.startswith(old_root + "/"):
+        return new_root + name[len(old_root) :]
+    return name
+
+
+def _scatter_listed_files(text: str) -> Set[str]:
+    """Return the image paths a scatter declares as downloadable."""
+
+    listed: Set[str] = set()
+    current: Dict[str, str] = {}
+
+    def flush() -> None:
+        if current.get("is_download", "").lower() != "true":
+            return
+        raw = current.get("file_name", "").strip()
+        if not raw or raw.upper() == "NONE":
+            return
+        name = raw.replace("\\", "/").strip().strip("\"'")
+        name = posixpath.normpath(name)
+        if not name or name == "." or name.startswith("/"):
+            return
+        if name == ".." or name.startswith("../"):
+            return
+        listed.add(name)
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("- partition_index:"):
+            flush()
+            current = {}
+        elif ":" in line and not line.startswith("#"):
+            key, _, value = line.partition(":")
+            current[key.strip().lstrip("- ").lower()] = value.strip().strip("\"'")
+    flush()
+    return listed
+
+
+def _optional_package_file(rel: str) -> bool:
+    """Metadata the updater reads from the package root."""
+
+    if posixpath.dirname(rel):
+        return False
+    name = posixpath.basename(rel).lower()
+    return (
+        name in PACKAGE_IMAGE_NAMES
+        or name == "manifest.json"
+        or (name.endswith(".txt") and "rockbox" in name)
+        or name.endswith(".auth")
+    )
+
+
 def _firmware_plan(
     firmware: FirmwarePackage,
+    drop_preserve_txt: bool = False,
 ) -> Tuple[List[Tuple[str, str, bool]], List[str]]:
     """Map firmware entries to paths relative to the scatter folder.
 
-    Returns ``(original zip name, relative name, is_dir)`` pairs plus skipped
-    names.  Relative names keep any sub-folders that sit under the scatter
-    folder, so multi-part packages survive intact.
+    Only the selected scatter, the images it lists and the optional updater
+    image are kept.  Other files in the firmware zip (for example a surrounding
+    SP Flash Tool tree) are intentionally stripped.
     """
 
     plan: List[Tuple[str, str, bool]] = []
@@ -215,6 +288,22 @@ def _firmware_plan(
     base = firmware.scatter_dir
     base_prefix = base + "/" if base and not base.endswith("/") else base
     with zipfile.ZipFile(firmware.path) as zf:
+        required: Optional[Set[str]] = None
+        chosen = firmware.chosen_scatter
+        if chosen:
+            scatter_name = f"{base}/{chosen}" if base else chosen
+            try:
+                text = zf.read(scatter_name).decode("utf-8", "ignore")
+            except KeyError:
+                text = ""
+            listed = _scatter_listed_files(text)
+            required = listed or None
+
+        keep = {name.lower() for name in (required or ())}
+        if chosen:
+            keep.add(chosen.lower())
+        present: Set[str] = set()
+
         for info in zf.infolist():
             name = _safe_name(info.filename)
             if name is None:
@@ -230,11 +319,37 @@ def _firmware_plan(
                 rel = name
             if not rel:
                 continue
+            is_dir = name.endswith("/")
             basename = posixpath.basename(rel.rstrip("/"))
+            if not is_dir:
+                present.add(rel.lower())
+            if (
+                drop_preserve_txt
+                and not is_dir
+                and basename.lower().endswith(".txt")
+                and "preserve" in basename.lower()
+            ):
+                skipped.append(info.filename)
+                continue
             if basename.lower() in ("history.ini", "fw_package.ini"):
                 # Replaced by the metadata this tool writes.
                 continue
-            plan.append((info.filename, rel, name.endswith("/")))
+            if required is not None:
+                rel_lower = rel.lower()
+                if is_dir:
+                    if not any(item.startswith(rel_lower) for item in keep):
+                        continue
+                elif rel_lower not in keep and not _optional_package_file(rel_lower):
+                    continue
+            plan.append((info.filename, rel, is_dir))
+
+        if required:
+            missing = sorted(required - present)
+            if missing:
+                raise PackagingError(
+                    f"{firmware.path.name} is missing scatter file(s): "
+                    + ", ".join(missing)
+                )
     return plan, skipped
 
 
@@ -261,6 +376,7 @@ def build_portable_package(
     version: str,
     source_asset: str,
     log: Optional[Callable[[str], None]] = None,
+    source_repo: str = "",
 ) -> BuildResult:
     """Write one portable package and return its metadata."""
 
@@ -268,10 +384,12 @@ def build_portable_package(
     if out_path.exists():
         out_path.unlink()
 
-    plan, skipped = _firmware_plan(firmware)
+    drop_preserve_txt = drops_preserve_txt(source_repo)
+    plan, skipped = _firmware_plan(firmware, drop_preserve_txt=drop_preserve_txt)
     with zipfile.ZipFile(tool_zip_path) as tool_zip:
         sp_prefix, app_name = _tool_layout(tool_zip)
-        if platform.layout == "beside_app" and not app_name:
+        mac_layout = platform.layout == "beside_app"
+        if mac_layout and not app_name:
             raise PackagingError(
                 f"{tool_zip_path.name} has no .app bundle; cannot use beside_app layout"
             )
@@ -279,29 +397,54 @@ def build_portable_package(
         firmware_dests: List[Tuple[str, str, bool]] = []
         seen = set()
         for src_name, rel, is_dir in plan:
-            dest = (sp_prefix + rel) if platform.layout == "sp_flash_tool" else rel
+            if platform.layout == "sp_flash_tool":
+                dest = sp_prefix + rel
+            elif mac_layout:
+                dest = MAC_FIRMWARE_DIR + "/" + rel
+            else:
+                dest = rel
             key = dest.lower()
             if key in seen:
                 continue
             seen.add(key)
             firmware_dests.append((src_name, dest, is_dir))
 
-        extra_files: Dict[str, bytes] = {"fw_package.ini": ini_text.encode("utf-8")}
+        extra_files: Dict[str, bytes] = {}
         if platform.layout == "sp_flash_tool":
+            extra_files["fw_package.ini"] = ini_text.encode("utf-8")
             extra_files[sp_prefix + "fw_package.ini"] = ini_text.encode("utf-8")
             scatter_name = firmware.chosen_scatter or (
                 firmware.scatters[0] if firmware.scatters else "scatter.txt"
             )
+            if drop_preserve_txt and "preserve" in scatter_name.lower():
+                scatter_name = next(
+                    (n for n in firmware.scatters if "preserve" not in n.lower()),
+                    "scatter.txt",
+                )
             extra_files[sp_prefix + "history.ini"] = HISTORY_INI.format(
                 scatter=scatter_name
             ).encode("utf-8")
         else:
+            extra_files[MAC_FIRMWARE_DIR + "/fw_package.ini"] = ini_text.encode(
+                "utf-8"
+            )
             extra_files["README.txt"] = macos_readme(
-                app_name or "Innioasis Updater.app",
-                source_asset,
-                software_name,
-                version,
+                MAC_APP_NAME, source_asset, software_name, version
             ).encode("utf-8")
+            # Renaming the bundle and retitling it invalidates the upstream code
+            # signature; the copy is unsigned, so drop its stale seal too.
+            try:
+                plist = plistlib.loads(
+                    tool_zip.read(f"{app_name}/Contents/Info.plist")
+                )
+            except (KeyError, ValueError):
+                plist = None
+            if isinstance(plist, dict):
+                plist["CFBundleName"] = "Install Firmware"
+                plist["CFBundleDisplayName"] = "Install Firmware"
+                extra_files[
+                    f"{MAC_APP_NAME}/Contents/Info.plist"
+                ] = plistlib.dumps(plist)
 
         overrides = {name.lower() for name in extra_files}
         overrides.update(dest.lower() for _, dest, _ in firmware_dests)
@@ -319,6 +462,15 @@ def build_portable_package(
                 if name is None:
                     skipped.append(info.filename)
                     continue
+                if mac_layout:
+                    if name == "__MACOSX" or name.startswith("__MACOSX/"):
+                        continue
+                    if app_name:
+                        name = _rename_bundle(name, app_name, MAC_APP_NAME)
+                    if name.startswith(
+                        f"{MAC_APP_NAME}/Contents/_CodeSignature"
+                    ):
+                        continue
                 if name.lower() in overrides:
                     # The firmware or our metadata replaces this file.
                     continue

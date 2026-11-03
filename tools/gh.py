@@ -9,6 +9,7 @@ plain HTTP for public repositories so local runs work without ``gh``.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import shutil
@@ -23,6 +24,33 @@ from typing import Any, Dict, List, Mapping, Optional
 API_ROOT = "https://api.github.com"
 USER_AGENT = "portable-flashing-package/1.0"
 CHUNK = 1024 * 1024
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(CHUNK)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def asset_matches(path: Path, asset: Mapping[str, Any]) -> bool:
+    """Return True when a local file already equals a release asset.
+
+    GitHub reports a ``sha256:`` digest for uploaded assets; when it is
+    missing only the size can be compared, which is still enough to skip the
+    obvious no-op without downloading the asset again.
+    """
+
+    if int(asset.get("size") or 0) != path.stat().st_size:
+        return False
+    digest = str(asset.get("digest") or "")
+    if digest.startswith("sha256:"):
+        return sha256_file(path) == digest.split(":", 1)[1]
+    return True
 
 
 class GitHubError(RuntimeError):
@@ -287,6 +315,11 @@ class GitHub:
             self._gh_path = shutil.which(self.gh_bin) or ""
         return bool(self._gh_path)
 
+    def authenticated(self) -> bool:
+        """True when a token is available from the environment or gh."""
+
+        return bool(self._auth_token())
+
     def _gh_env(self) -> Dict[str, str]:
         env = dict(os.environ)
         if self.token:
@@ -453,18 +486,99 @@ class GitHub:
         created = self.get_release_by_tag(repo, tag)
         return created or {}
 
-    def upload(self, repo: str, tag: str, paths: List[Path], log=None) -> None:
+    def upload(
+        self,
+        repo: str,
+        tag: str,
+        paths: List[Path],
+        log=None,
+        skip_unchanged: bool = True,
+    ) -> Dict[str, int]:
+        """Upload only assets that differ from the release.
+
+        Existing assets whose size and SHA-256 digest match are skipped; a
+        changed asset replaces just the asset with that name.  The release,
+        its notes and every other asset are left in place, so refreshing an
+        old release never deletes and recreates it.
+        """
+
+        stats = {"uploaded": 0, "skipped": 0, "bytes": 0}
         if not paths:
-            return
-        for start in range(0, len(paths), 10):
-            batch = [str(p) for p in paths[start : start + 10]]
+            return stats
+
+        remote: Dict[str, Dict[str, Any]] = {}
+        if skip_unchanged:
+            release = self.get_release_by_tag(repo, tag) or {}
+            remote = {
+                str(asset.get("name")): asset
+                for asset in release.get("assets") or []
+            }
+
+        pending: List[Path] = []
+        for path in paths:
+            current = remote.get(path.name)
+            if current and asset_matches(path, current):
+                stats["skipped"] += 1
+                if log:
+                    log(f"    unchanged {path.name}")
+                continue
+            pending.append(path)
+
+        for start in range(0, len(pending), 10):
+            batch = pending[start : start + 10]
             for attempt in range(3):
                 try:
-                    self._run_gh(["release", "upload", tag, "--repo", repo, "--clobber", *batch])
+                    self._run_gh(
+                        [
+                            "release",
+                            "upload",
+                            tag,
+                            "--repo",
+                            repo,
+                            "--clobber",
+                            *[str(path) for path in batch],
+                        ]
+                    )
                     break
                 except GitHubError:
                     if attempt == 2:
                         raise
                     time.sleep(3 * (attempt + 1))
+            stats["uploaded"] += len(batch)
+            stats["bytes"] += sum(path.stat().st_size for path in batch)
             if log:
-                log(f"    uploaded {min(start + 10, len(paths))}/{len(paths)} assets")
+                log(
+                    f"    uploaded {min(start + 10, len(pending))}/{len(pending)} "
+                    "changed assets"
+                )
+        return stats
+
+    def list_org_repos(self, org: str, max_pages: int = 5) -> List[Dict[str, Any]]:
+        """List organisation repositories (used by the desktop review)."""
+
+        repos: List[Dict[str, Any]] = []
+        for page in range(1, max_pages + 1):
+            chunk = self.request_json(
+                f"/orgs/{urllib.parse.quote(org, safe='')}/repos",
+                {"per_page": 100, "page": page},
+            )
+            if not isinstance(chunk, list):
+                break
+            repos.extend(chunk)
+            if len(chunk) < 100:
+                break
+        return repos
+
+    def list_workflow_runs(
+        self, repo: str, workflow: str = "mirror.yml", limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """Recent runs for one workflow, newest first."""
+
+        data = self.request_json(
+            f"/repos/{repo}/actions/workflows/"
+            f"{urllib.parse.quote(workflow, safe='')}/runs",
+            {"per_page": max(1, min(limit, 100))},
+        )
+        if not isinstance(data, dict):
+            return []
+        return list(data.get("workflow_runs") or [])

@@ -77,7 +77,10 @@ deflated at level 9.
 
 Note that in the macOS archive the app is named `Innioasis Updater.app`, not
 `Updater CE.app` as older `firmware.html` code assumed. The packager detects
-any root `.app` bundle instead of hard-coding a name.
+any root `.app` bundle instead of hard-coding a name, then renames it to
+`Install Firmware.app` and retitles `CFBundleName`/`CFBundleDisplayName`. The
+rename invalidates the upstream seal, so `Contents/_CodeSignature` is dropped
+and the copy is unsigned rather than reported as damaged.
 
 ## Deployment shapes
 
@@ -99,7 +102,7 @@ updater release ─► newest per platform ──►│
                                           │
              ┌────────────────────────────┼───────────────────────────┐
              ▼                            ▼                           ▼
-   SP_Flash_Tool merge            SP_Flash_Tool merge        .app + files beside it
+   SP_Flash_Tool merge            SP_Flash_Tool merge     Install Firmware.app + Firmware/
    (Windows x64/arm64)            (Linux x64/arm64)          (macOS)
              └────────────────────────────┼───────────────────────────┘
                                           ▼
@@ -133,6 +136,15 @@ The scatter check is what keeps Rockbox's `update.zip` out. It is an SD-card
 update with no scatter and no partition images; wrapping it would produce a
 useless flashing package.
 
+A file whose name contains `preserve` is treated as an alternative scatter, not
+the package scatter. Generated packages contain only the selected scatter, the
+images it lists and an optional updater image; other files are stripped.
+
+For `schulzcode/y2linux` and `schulzcode/y2reborn`, generated packages also drop
+any `*.txt` whose name contains `preserve`. Updater CE 2.5.2 preserves the
+userdata partition itself, and a second scatter in the same folder would make
+the package ambiguous.
+
 If a release has no eligible ZIP after filtering, the release is skipped, and
 any stale index entry for that tag is removed. The original release is still
 reachable on the source repository, which is what the website falls back to.
@@ -160,8 +172,10 @@ app version rather than keeping the copy they were first built with.
 Windows/Linux (`sp_flash_tool`):
 
 1. Copy every portable entry, except files that the firmware will replace.
-2. Copy the firmware's scatter folder contents into `SP_Flash_Tool/`,
-   flattening the scatter folder itself but keeping any sub-folders below it.
+2. Copy only the selected scatter, the image files it lists, the optional
+   updater image and small app metadata (`manifest.json`, `*rockbox*.txt`,
+   `*.auth`) into `SP_Flash_Tool/`, keeping any sub-folders below the scatter
+   folder. Surrounding files such as a bundled SP Flash Tool tree are stripped.
 3. Write `SP_Flash_Tool/fw_package.ini` and `fw_package.ini` at the portable
    root.
 4. Replace `SP_Flash_Tool/history.ini` with one whose `scatterHistory` points
@@ -170,11 +184,19 @@ Windows/Linux (`sp_flash_tool`):
 
 macOS (`beside_app`):
 
-1. Copy every entry of the portable zip, preserving the `.app` bundle and its
-   symlinks.
-2. Copy the firmware's scatter folder contents to the ZIP root, beside the
-   `.app`.
-3. Write `fw_package.ini` and `README.txt` at the root.
+1. Copy every entry of the portable zip, preserving the bundle and its
+   symlinks, and rename the root `.app` to `Install Firmware.app`.
+2. Retitle `CFBundleName`/`CFBundleDisplayName` to `Install Firmware`, and drop
+   `Contents/_CodeSignature` because the rename invalidates it.
+3. Copy only the selected scatter, the images it lists, the optional updater
+   image and small app metadata (`manifest.json`, `*rockbox*.txt`, `*.auth`)
+   into `Firmware/` beside the app.
+4. Write `Firmware/fw_package.ini` and `README.txt` at the root.
+
+Updater CE 2.5.1 looks for a scatter in the folder that contains the `.app`,
+so automatic preload needs a build that also checks the neighbouring
+`Firmware/` folder. Until that ships, the folder can still be picked manually
+from the app's file browser.
 
 Firmware entries that collide with tool files overwrite them. That is
 intentional: `rom.zip` is itself a working SP Flash Tool bundle, so the merged
@@ -187,13 +209,13 @@ Path traversal (`../`, absolute paths, drive letters) is rejected and logged.
 The mirror owns two representations of the source material:
 
 - the source README copied to `README.md` (configurable via `source_readme`)
-- each release body, which keeps the original notes above a provenance footer
+- each release body, which keeps the original notes plus an invisible build record
 
 `index.json` also stores the unmodified `source_title` and `source_notes` for
 every release, plus a top-level `source_readme` object with the copied path and
 its raw URL. The website generator should use those fields rather than parsing
-the mirror release body: the body's footer and hidden `portable-mirror` block
-are implementation details.
+the mirror release body: the body's hidden `portable-mirror` block is an
+implementation detail.
 
 A stale README does not force a package rebuild. The README and index are
 refreshed independently, so changing upstream documentation does not cause
@@ -206,16 +228,11 @@ Each mirrored release body is:
 ```
 <original notes verbatim>
 
----
-
-Portable flashing packages ... were added by [`owner/mirror`](...) from
-`source@tag` using Innioasis Updater CE. The original release notes are
-unchanged above.
-
-<!-- portable-mirror:{"v":1,"fingerprint":"…","assets":[…],"skipped":[…],"stats":{…}} -->
+<!-- portable-mirror:{"v":3,"fingerprint":"…","assets":[…],"skipped":[…],"stats":{…}} -->
 ```
 
-The hidden block records:
+The HTML comment is invisible on GitHub, so the rendered release shows only
+the original notes. It records:
 
 - `fingerprint`: hash of builder version, relevant config, every source asset
   (name/size/id) and the exact updater asset per platform

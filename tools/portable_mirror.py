@@ -63,8 +63,11 @@ def utcnow() -> str:
 
 
 class Log:
-    def __init__(self, verbose: bool = False) -> None:
+    def __init__(
+        self, verbose: bool = False, sink: Optional[Callable[[str], None]] = None
+    ) -> None:
         self.verbose = verbose
+        self.sink = sink
         self.lines: List[str] = []
         self._lock = threading.Lock()
 
@@ -73,6 +76,8 @@ class Log:
         with self._lock:
             self.lines.append(message)
             print(f"[{stamp}] {message}", flush=True)
+            if self.sink is not None:
+                self.sink(f"[{stamp}] {message}")
 
     def debug(self, message: str) -> None:
         if self.verbose:
@@ -194,6 +199,125 @@ def block_is_current(
         if not name or current.get(name) != size:
             return False
     return True
+
+
+def assets_differ(source: Mapping[str, Any], mirror: Mapping[str, Any]) -> bool:
+    """Compare two release assets using digests when both sides have them."""
+
+    if int(source.get("size") or 0) != int(mirror.get("size") or 0):
+        return True
+    left = str(source.get("digest") or "")
+    right = str(mirror.get("digest") or "")
+    return bool(left and right and left != right)
+
+
+def review_release(
+    cfg: MirrorConfig,
+    release: Mapping[str, Any],
+    existing: Optional[Mapping[str, Any]],
+    updater: Mapping[str, Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Classify one source release against its mirror without downloading."""
+
+    tag = release_tag(release)
+    item: Dict[str, Any] = {
+        "tag": tag,
+        "state": "current",
+        "missing": [],
+        "changed": [],
+    }
+    if not existing:
+        item["state"] = "missing-release"
+        return item
+
+    mirror_assets = {
+        str(asset.get("name")): asset for asset in existing.get("assets") or []
+    }
+    if cfg.copy_original_assets:
+        for asset in release.get("assets") or []:
+            name = str(asset.get("name") or "")
+            if not name or name == STATS_ASSET:
+                continue
+            if int(asset.get("size") or 0) > cfg.max_asset_bytes:
+                continue
+            current = mirror_assets.get(name)
+            if not current:
+                item["missing"].append(name)
+            elif assets_differ(asset, current):
+                item["changed"].append(name)
+
+    block = parse_block(existing.get("body"))
+    fingerprint = release_fingerprint(cfg, release, updater)
+    if not block_is_current(cfg, release, existing, block, fingerprint):
+        item["state"] = "needs-build"
+    elif item["missing"]:
+        item["state"] = "missing-assets"
+    elif item["changed"]:
+        item["state"] = "changed-assets"
+    return item
+
+
+def review_mirror(
+    cfg: MirrorConfig, gh: GitHub, args, log: Optional[Log] = None
+) -> Dict[str, Any]:
+    """Review every selected source release against the mirror repository."""
+
+    updater = resolve_updater_assets(cfg, gh, log or Log())
+    releases = filter_source_releases(cfg, gh.list_releases(cfg.source_repo), args)
+    rows: List[Dict[str, Any]] = []
+    for release in releases:
+        existing = (
+            gh.get_release_by_tag(cfg.mirror_repo, release_tag(release))
+            if cfg.mirror_repo
+            else None
+        )
+        rows.append(review_release(cfg, release, existing, updater))
+    needing = [row for row in rows if row["state"] != "current"]
+    return {
+        "source_repo": cfg.source_repo,
+        "mirror_repo": cfg.mirror_repo,
+        "releases": rows,
+        "summary": {
+            "total": len(rows),
+            "current": len(rows) - len(needing),
+            "needing_update": len(needing),
+            "missing_releases": sum(
+                1 for row in rows if row["state"] == "missing-release"
+            ),
+        },
+    }
+
+
+def review(args) -> int:
+    log = Log(args.verbose)
+    cfg = load_config(
+        args.config,
+        source_repo=args.source_repo,
+        mirror_repo=args.mirror_repo,
+        platforms=parse_csv(args.platforms) or None,
+    )
+    gh = GitHub()
+    report = review_mirror(cfg, gh, args, log)
+    text = json.dumps(report, indent=2) + "\n"
+    report_path = Path(args.json_report)
+    report_path.write_text(text, encoding="utf-8")
+    if args.json:
+        print(text)
+    else:
+        print(f"{'release':<32} state")
+        for row in report["releases"]:
+            extra = ""
+            if row["missing"]:
+                extra += " missing=" + ",".join(row["missing"])
+            if row["changed"]:
+                extra += " changed=" + ",".join(row["changed"])
+            print(f"{row['tag']:<32} {row['state']}{extra}")
+        summary = report["summary"]
+        print(
+            f"\n{summary['needing_update']}/{summary['total']} release(s) "
+            f"need an update; report: {report_path}"
+        )
+    return 0
 
 
 def build_index_entry(
@@ -392,7 +516,7 @@ def build_for_release(
     for asset in downloadable:
         path = download_release_asset(cfg, gh, asset, src_dir, log)
         try:
-            package = inspect_firmware(path)
+            package = inspect_firmware(path, source_repo=cfg.source_repo)
         except PackagingError as exc:
             log(f"  skipping {asset['name']}: {exc}")
             skipped_assets.append({"name": str(asset["name"]), "reason": str(exc)})
@@ -476,6 +600,7 @@ def build_for_release(
             release_version(tag),
             str(asset["name"]),
             log=log,
+            source_repo=cfg.source_repo,
         )
 
     with ThreadPoolExecutor(max_workers=cfg.build_workers) as pool:
@@ -558,7 +683,7 @@ def build_for_release(
         "failures": failures,
     }
     title = release_title(cfg, release)
-    notes = render_notes(cfg, release, block, cfg.mirror_repo or "(mirror)")
+    notes = render_notes(release, block)
     notes_path = work / tag / "notes.md"
     notes_path.parent.mkdir(parents=True, exist_ok=True)
     notes_path.write_text(notes, encoding="utf-8")
@@ -572,8 +697,11 @@ def build_for_release(
         gh.ensure_release(cfg.mirror_repo, tag, title, notes_path, log=log)
         uploads = [r.path for r in ordered_results] + [path for _name, path in original_files]
         uploads.append(stats_path)
-        gh.upload(cfg.mirror_repo, tag, uploads, log=log)
-        log(f"  published {len(ordered_results)} portable package(s) for {tag}")
+        uploaded = gh.upload(cfg.mirror_repo, tag, uploads, log=log)
+        log(
+            f"  published {len(ordered_results)} portable package(s) for {tag} "
+            f"({uploaded['uploaded']} new, {uploaded['skipped']} unchanged)"
+        )
 
     return {
         "tag": tag,
@@ -685,8 +813,8 @@ def sync_source_readme(
     return info
 
 
-def sync(args) -> int:
-    log = Log(args.verbose)
+def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
+    log = Log(args.verbose, sink)
     cfg = load_config(
         args.config,
         source_repo=args.source_repo,
@@ -779,6 +907,28 @@ def sync(args) -> int:
             block = parse_block(existing.get("body")) if existing else None
             if not args.force and block_is_current(cfg, release, existing, block, fingerprint):
                 log(f"  up to date ({len(block.get('assets') or [])} package(s))")
+                # Older builds appended a visible footer.  Refresh just the
+                # notes so current releases get the original body back without
+                # rebuilding their packages.
+                notes = render_notes(release, block)
+                if (
+                    not args.dry_run
+                    and str(existing.get("body") or "").strip() != notes.strip()
+                ):
+                    try:
+                        notes_path = work_root / tag / "notes.md"
+                        notes_path.parent.mkdir(parents=True, exist_ok=True)
+                        notes_path.write_text(notes, encoding="utf-8")
+                        gh.ensure_release(
+                            cfg.mirror_repo,
+                            tag,
+                            release_title(cfg, release),
+                            notes_path,
+                            log=log,
+                        )
+                        log(f"  refreshed release notes for {tag}")
+                    except (GitHubError, ApiError, OSError) as exc:
+                        log(f"  warning: could not refresh release notes: {exc}")
                 stats = None
                 try:
                     stats = refresh_release_stats(
@@ -913,7 +1063,7 @@ def build_only(args) -> int:
         candidates = select_firmware_assets(release.get("assets") or [], cfg)
         for asset in candidates:
             path = download_release_asset(cfg, gh, asset, work / "src", log)
-            package = inspect_firmware(path)
+            package = inspect_firmware(path, source_repo=cfg.source_repo)
             if cfg.require_scatter and not package.scatters:
                 log(f"skipping {asset['name']}: no scatter")
                 continue
@@ -939,6 +1089,7 @@ def build_only(args) -> int:
                     release_version(tag),
                     str(asset["name"]),
                     log=log,
+                    source_repo=cfg.source_repo,
                 )
                 manifest["outputs"].append(
                     {
@@ -1030,6 +1181,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     build_cmd.add_argument("--tag", required=True)
     build_cmd.add_argument("--out", help="output directory (default dist/<tag>)")
     sub.add_parser("status", parents=[common], help="show which mirror releases are current")
+    review_cmd = sub.add_parser(
+        "review",
+        parents=[common],
+        help="report missing or changed assets without publishing anything",
+    )
+    review_cmd.add_argument("--json", action="store_true", help="print the report as JSON")
+    review_cmd.set_defaults(json_report="review-report.json")
 
     args = parser.parse_args(argv)
     try:
@@ -1037,6 +1195,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return build_only(args)
         if args.command == "status":
             return status(args)
+        if args.command == "review":
+            return review(args)
         return sync(args)
     except (ConfigError, GitHubError, ApiError, PackagingError) as exc:
         print(f"error: {exc}", file=sys.stderr)

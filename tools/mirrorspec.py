@@ -24,13 +24,25 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 # Bump when the produced zip layout or metadata changes so existing mirror
 # releases are rebuilt instead of being treated as up to date.
-BUILDER_VERSION = 1
+# 2: macOS packages are Install Firmware.app with firmware in Firmware/.
+# 3: firmware zips are reduced to the scatter, its listed images and the icon.
+BUILDER_VERSION = 3
 
 DEFAULT_BRANCH = "main"
 DEFAULT_TITLE_PREFIX = "Portable Flashing Package: "
 DEFAULT_UPDATER_REPO = "y1-community/updater-ce-neo"
 DEFAULT_README_PATH = "README.md"
 DEFAULT_README_COMMIT = "Mirror source README"
+
+# Updater CE 2.5.2 preserves userdata itself, so these sources must not ship a
+# second, preserve-data scatter in the generated package.
+PRESERVE_TXT_REPOS = frozenset({"schulzcode/y2linux", "schulzcode/y2reborn"})
+
+
+def drops_preserve_txt(source_repo: str) -> bool:
+    """Whether generated packages for ``source_repo`` drop preserve-text files."""
+
+    return str(source_repo or "").strip().lower() in PRESERVE_TXT_REPOS
 
 # Suffixes this project owns.  Used to keep our own output out of the source
 # asset selection (which matters when a clone points at another mirror).
@@ -513,6 +525,9 @@ def config_fingerprint(cfg: MirrorConfig) -> str:
             for r in cfg.rules
         ],
     }
+    if drops_preserve_txt(cfg.source_repo):
+        # Only these configs need a new fingerprint; other mirrors keep theirs.
+        payload["drop_preserve_txt"] = True
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -577,25 +592,15 @@ def parse_block(body: Optional[str]) -> Optional[Dict[str, Any]]:
     return data if isinstance(data, dict) else None
 
 
-def render_notes(
-    cfg: MirrorConfig,
-    release: Mapping[str, Any],
-    block: Mapping[str, Any],
-    mirror_repo: str,
-) -> str:
-    """Original release notes plus a short, stable footer and build record."""
+def render_notes(release: Mapping[str, Any], block: Mapping[str, Any]) -> str:
+    """Original release notes followed by the invisible build record."""
 
     body = str(release.get("body") or "").strip()
-    tag = str(release.get("tag_name") or "")
-    footer = (
-        "\n\n---\n\n"
-        f"Portable flashing packages for Windows, Linux and macOS were added by "
-        f"[`{mirror_repo}`](https://github.com/{mirror_repo}) from "
-        f"`{cfg.source_repo}@{tag}` using Innioasis Updater CE. "
-        "The original release notes are unchanged above.\n\n"
-        f"<!-- portable-mirror:{json.dumps(block, sort_keys=True, separators=(',', ':'))} -->"
+    marker = (
+        "<!-- portable-mirror:"
+        f"{json.dumps(block, sort_keys=True, separators=(',', ':'))} -->"
     )
-    return (body + footer).strip() + "\n"
+    return (body + "\n\n" + marker).strip() + "\n"
 
 
 def macos_readme(app_name: str, firmware_asset: str, software: str, version: str) -> str:
@@ -607,13 +612,14 @@ def macos_readme(app_name: str, firmware_asset: str, software: str, version: str
         f"Firmware: {title or software or 'Innioasis firmware'} ({firmware_asset})",
         "",
         "Quick start on macOS:",
-        f'1. Drag "{app_name}" into your Applications folder.',
-        "2. If macOS prevents opening the app, open System Settings > Privacy & Security,",
+        f'1. Keep "{app_name}" and the "Firmware" folder together; you can move',
+        "   the whole folder to Applications.",
+        "2. Launch Install Firmware and follow the on-screen prompt.",
+        "3. If macOS prevents opening the app, open System Settings > Privacy & Security,",
         '   scroll to Security and click "Open Anyway", then confirm.',
-        "3. Launch Innioasis Updater CE and follow the on-screen prompt.",
         "",
-        "The firmware files in this folder sit beside the .app bundle, so Updater CE",
-        "detects the package automatically (fw_package.ini describes the release).",
+        "The firmware files and fw_package.ini live in the Firmware folder next to",
+        "the app. If the app asks for a firmware folder, choose that one.",
         "",
     ]
     return "\n".join(lines)

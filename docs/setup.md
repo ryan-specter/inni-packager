@@ -119,7 +119,7 @@ Open any mirrored release and check:
 
 - the tag matches the source
 - the title starts with `Portable Flashing Package: `
-- the original notes are intact above the short footer
+- the original notes are intact; no visible footer was added
 - `README.md` matches the source repository's README (or the configured path)
 - the assets include `rom-windows.zip`, `rom-linux.zip` and `rom-macos.zip`
 - `stats.txt` is present and shows source, mirror, per-platform and combined

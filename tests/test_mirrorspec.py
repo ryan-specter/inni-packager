@@ -117,8 +117,13 @@ class ConfigTests(unittest.TestCase):
             ],
             "original_assets": ["updater.jpg"],
         }
-        notes = mirrorspec.render_notes(self.cfg, release, block, "owner/mirror")
+        notes = mirrorspec.render_notes(release, block)
         self.assertTrue(notes.startswith("Original notes."))
+        self.assertNotIn("Portable flashing packages", notes)
+        self.assertNotIn("---", notes)
+        self.assertEqual(
+            notes.split("<!-- portable-mirror:", 1)[0].rstrip(), "Original notes."
+        )
         parsed = mirrorspec.parse_block(notes)
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed["fingerprint"], "abc")

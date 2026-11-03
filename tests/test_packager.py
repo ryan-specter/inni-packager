@@ -1,4 +1,5 @@
 import os
+import plistlib
 import sys
 import unittest
 import zipfile
@@ -71,8 +72,15 @@ class PackagerTests(unittest.TestCase):
             self.mac_tool,
             [
                 ("Innioasis Updater.app/", b"", DIR_MODE),
+                ("Innioasis Updater.app/Contents/Info.plist", plistlib.dumps({
+                    "CFBundleName": "Innioasis Updater",
+                    "CFBundleDisplayName": "Innioasis Updater",
+                    "CFBundleExecutable": "Innioasis Updater",
+                }), FILE_MODE),
+                ("Innioasis Updater.app/Contents/_CodeSignature/CodeResources", b"sig", FILE_MODE),
                 ("Innioasis Updater.app/Contents/MacOS/Innioasis Updater", b"binary", FILE_MODE),
                 ("Innioasis Updater.app/Contents/Frameworks/QtCore", b"QtCore.framework/Versions/A/QtCore", LINK_MODE),
+                ("__MACOSX/._Innioasis Updater.app", b"junk", FILE_MODE),
             ],
         )
 
@@ -89,7 +97,138 @@ class PackagerTests(unittest.TestCase):
         package = inspect_firmware(self.firmware)
         self.assertEqual(package.scatter_dir, "")
         self.assertEqual(package.chosen_scatter, "MT6572_Android_scatter.txt")
-        self.assertEqual(len(package.scatters), 2)
+        self.assertEqual(package.scatters, ["MT6572_Android_scatter.txt"])
+
+    def test_y2_repos_drop_preserve_txt(self):
+        for repo in ("schulzcode/y2linux", "schulzcode/Y2Reborn"):
+            package = inspect_firmware(self.firmware, source_repo=repo)
+            self.assertEqual(package.scatters, ["MT6572_Android_scatter.txt"])
+            out = self.tmp / "rom-windows.zip"
+            build_portable_package(
+                self.windows_tool,
+                package,
+                self.cfg.platform("windows"),
+                out,
+                self.ini,
+                "Original Software",
+                "3.1.2",
+                "rom.zip",
+                source_repo=repo,
+            )
+            names = names_of(out)
+            self.assertNotIn("SP_Flash_Tool/preserve_data_scatter.txt", names)
+            self.assertIn("SP_Flash_Tool/MT6572_Android_scatter.txt", names)
+            with zipfile.ZipFile(out) as archive:
+                history = archive.read("SP_Flash_Tool/history.ini").decode("utf-8")
+            self.assertIn("scatterHistory=MT6572_Android_scatter.txt", history)
+
+        mac_out = self.tmp / "rom-macos.zip"
+        build_portable_package(
+            self.mac_tool,
+            inspect_firmware(self.firmware, source_repo="schulzcode/y2linux"),
+            self.cfg.platform("macos"),
+            mac_out,
+            self.ini,
+            "Original Software",
+            "3.1.2",
+            "rom.zip",
+            source_repo="schulzcode/y2linux",
+        )
+        mac_names = names_of(mac_out)
+        self.assertNotIn("Firmware/preserve_data_scatter.txt", mac_names)
+        self.assertIn("Firmware/MT6572_Android_scatter.txt", mac_names)
+
+        package = inspect_firmware(self.firmware, source_repo="schulzcode/other")
+        self.assertEqual(package.scatters, ["MT6572_Android_scatter.txt"])
+        out = self.tmp / "rom-other.zip"
+        build_portable_package(
+            self.windows_tool,
+            package,
+            self.cfg.platform("windows"),
+            out,
+            self.ini,
+            "Original Software",
+            "3.1.2",
+            "rom.zip",
+            source_repo="schulzcode/other",
+        )
+        self.assertIn("SP_Flash_Tool/preserve_data_scatter.txt", names_of(out))
+
+    def test_only_scatter_listed_files_and_icon_are_packed(self):
+        pruned = self.tmp / "pruned.zip"
+        scatter = (
+            "- partition_index: SYS0\n"
+            "  partition_name: boot\n"
+            "  file_name: boot.img\n"
+            "  is_download: true\n"
+            "- partition_index: SYS1\n"
+            "  partition_name: system\n"
+            "  file_name: images/system.img\n"
+            "  is_download: true\n"
+        ).encode("utf-8")
+        write_zip(
+            pruned,
+            [
+                ("MT6572_Android_scatter.txt", scatter, FILE_MODE),
+                ("boot.img", b"boot", FILE_MODE),
+                ("images/", b"", DIR_MODE),
+                ("images/system.img", b"system", FILE_MODE),
+                ("images/unlisted.bin", b"extra", FILE_MODE),
+                ("SP_Flash_Tool/leftover.exe", b"tool", FILE_MODE),
+                ("updater.png", b"icon", FILE_MODE),
+                ("rockbox_themes.txt", b"marker", FILE_MODE),
+                ("auth.auth", b"auth", FILE_MODE),
+                ("manifest.json", b"{}", FILE_MODE),
+                ("fw_package.ini", b"[old]\n", FILE_MODE),
+            ],
+        )
+        package = inspect_firmware(pruned)
+        self.assertEqual(package.chosen_scatter, "MT6572_Android_scatter.txt")
+
+        out = self.tmp / "pruned-windows.zip"
+        build_portable_package(
+            self.windows_tool,
+            package,
+            self.cfg.platform("windows"),
+            out,
+            self.ini,
+            "Original Software",
+            "3.1.2",
+            "pruned.zip",
+        )
+        names = names_of(out)
+        self.assertIn("SP_Flash_Tool/MT6572_Android_scatter.txt", names)
+        self.assertIn("SP_Flash_Tool/boot.img", names)
+        self.assertIn("SP_Flash_Tool/images/", names)
+        self.assertIn("SP_Flash_Tool/images/system.img", names)
+        self.assertIn("SP_Flash_Tool/updater.png", names)
+        self.assertIn("SP_Flash_Tool/rockbox_themes.txt", names)
+        self.assertIn("SP_Flash_Tool/auth.auth", names)
+        self.assertIn("SP_Flash_Tool/manifest.json", names)
+        self.assertNotIn("SP_Flash_Tool/images/unlisted.bin", names)
+        self.assertNotIn("SP_Flash_Tool/leftover.exe", names)
+
+        mac_out = self.tmp / "pruned-macos.zip"
+        build_portable_package(
+            self.mac_tool,
+            package,
+            self.cfg.platform("macos"),
+            mac_out,
+            self.ini,
+            "Original Software",
+            "3.1.2",
+            "pruned.zip",
+        )
+        mac_names = names_of(mac_out)
+        self.assertIn("Firmware/MT6572_Android_scatter.txt", mac_names)
+        self.assertIn("Firmware/boot.img", mac_names)
+        self.assertIn("Firmware/images/system.img", mac_names)
+        self.assertIn("Firmware/updater.png", mac_names)
+        self.assertIn("Firmware/rockbox_themes.txt", mac_names)
+        self.assertIn("Firmware/auth.auth", mac_names)
+        self.assertIn("Firmware/manifest.json", mac_names)
+        self.assertNotIn("Firmware/images/unlisted.bin", mac_names)
+        self.assertNotIn("Firmware/leftover.exe", mac_names)
 
     def test_windows_layout(self):
         out = self.tmp / "rom-windows.zip"
@@ -138,21 +277,34 @@ class PackagerTests(unittest.TestCase):
             "rom.zip",
         )
         names = names_of(out)
-        self.assertIn("Innioasis Updater.app/Contents/MacOS/Innioasis Updater", names)
-        self.assertIn("boot.img", names)
-        self.assertIn("MT6572_Android_scatter.txt", names)
-        self.assertIn("fw_package.ini", names)
+        self.assertIn("Install Firmware.app/Contents/MacOS/Innioasis Updater", names)
+        self.assertIn("Install Firmware.app/Contents/Info.plist", names)
+        self.assertIn("Firmware/boot.img", names)
+        self.assertIn("Firmware/MT6572_Android_scatter.txt", names)
+        self.assertIn("Firmware/fw_package.ini", names)
         self.assertIn("README.txt", names)
+        self.assertNotIn("boot.img", names)
+        self.assertNotIn("fw_package.ini", names)
+        self.assertFalse(any(n.startswith("Innioasis Updater.app") for n in names))
+        self.assertFalse(any(n.startswith("__MACOSX") for n in names))
+        self.assertFalse(any("_CodeSignature" in n for n in names))
         self.assertFalse(any(n.startswith("SP_Flash_Tool/") for n in names))
 
         with zipfile.ZipFile(out) as archive:
-            info = archive.getinfo("Innioasis Updater.app/Contents/Frameworks/QtCore")
+            info = archive.getinfo("Install Firmware.app/Contents/Frameworks/QtCore")
             self.assertEqual(info.external_attr >> 16 & 0o170000, 0o120000)
             self.assertEqual(
                 archive.read(info), b"QtCore.framework/Versions/A/QtCore"
             )
+            plist = plistlib.loads(
+                archive.read("Install Firmware.app/Contents/Info.plist")
+            )
+            self.assertEqual(plist["CFBundleName"], "Install Firmware")
+            self.assertEqual(plist["CFBundleDisplayName"], "Install Firmware")
+            self.assertEqual(plist["CFBundleExecutable"], "Innioasis Updater")
             readme = archive.read("README.txt").decode("utf-8")
-            self.assertIn("Innioasis Updater.app", readme)
+            self.assertIn("Install Firmware.app", readme)
+            self.assertIn("Firmware", readme)
         self.assertGreater(result.size, 0)
 
     def test_traversal_entries_are_skipped(self):
