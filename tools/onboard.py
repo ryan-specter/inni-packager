@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import html
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
@@ -32,6 +34,12 @@ from manifest import (
     group_products,
     parse_manifest,
 )
+
+SITE_REPO = "y1-community/Innioasis-Updater"
+SITE_MANIFEST = "slidia_manifest.xml"
+PACKAGE_TAG_RE = re.compile(r"<package\b[^>]*?/>")
+ATTRIBUTE_RE = re.compile(r'([A-Za-z_][\w:.-]*)\s*=\s*"([^"]*)"')
+PORTABLE_ATTR_RE = re.compile(r"(\bportable_zips\s*=\s*)([\"'])(.*?)\2")
 
 
 def parse_csv(value: Optional[str]) -> List[str]:
@@ -92,6 +100,82 @@ def _put_action(existing: bool, changed: bool) -> str:
     if changed:
         return "updated" if existing else "created"
     return "unchanged"
+
+
+def set_portable_zips(text: str, mirrors: Mapping[str, str]) -> tuple[str, int]:
+    """Set ``portable_zips`` on matching ``type="img"`` manifest rows.
+
+    The site manifest is human-maintained and contains comments and irregular
+    whitespace, so this is a tag-level text update rather than an ElementTree
+    round trip.  Only rows whose source repository is in ``mirrors`` change.
+    """
+
+    changed = 0
+
+    def replace_tag(match: re.Match[str]) -> str:
+        nonlocal changed
+        tag = match.group(0)
+        attrs = dict(ATTRIBUTE_RE.findall(tag))
+        if (attrs.get("type") or "").lower() != "img":
+            return tag
+        mirror = mirrors.get((attrs.get("repo") or "").strip().lower())
+        if not mirror:
+            return tag
+        value = html.escape(mirror, quote=True)
+        if PORTABLE_ATTR_RE.search(tag):
+            updated = PORTABLE_ATTR_RE.sub(
+                lambda item: item.group(1) + '"' + value + '"', tag, count=1
+            )
+        else:
+            updated = re.sub(
+                r"\s*/>$", ' portable_zips="' + value + '" />', tag
+            )
+        if updated != tag:
+            changed += 1
+        return updated
+
+    return PACKAGE_TAG_RE.sub(replace_tag, text), changed
+
+
+def sync_site_manifest(
+    gh: GitHub,
+    products: Sequence[Product],
+    *,
+    site_repo: str = SITE_REPO,
+    site_manifest: str = SITE_MANIFEST,
+    branch: str = "main",
+    log=print,
+) -> Dict[str, Any]:
+    """Publish the created mirror names into the website manifest."""
+
+    mirrors = {
+        product.source_repo.lower(): product.mirror_repo for product in products
+    }
+    existing = gh.get_file(site_repo, site_manifest, ref=branch)
+    if not existing:
+        raise GitHubError(
+            f"site manifest not found: {site_repo}/{site_manifest}@{branch}"
+        )
+    original = str(existing.get("text") or "")
+    updated, rows = set_portable_zips(original, mirrors)
+    action = "unchanged"
+    if rows:
+        committed = gh.put_file(
+            site_repo,
+            site_manifest,
+            updated,
+            "Define portable mirror repositories in the firmware manifest",
+            branch,
+        )
+        action = "updated" if committed else "unchanged"
+        log(f"  site manifest: {action} ({rows} rows)")
+    return {
+        "repo": site_repo,
+        "path": site_manifest,
+        "branch": branch,
+        "action": action,
+        "rows": rows,
+    }
 
 
 def apply_product(
@@ -220,6 +304,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--packager-repo", default="ryan-specter/inni-packager"
     )
     parser.add_argument("--packager-ref", default="main")
+    parser.add_argument("--site-repo", default=SITE_REPO, help="repository containing the website manifest")
+    parser.add_argument("--site-manifest", default=SITE_MANIFEST, help="path to the website manifest")
+    parser.add_argument("--no-site-manifest", action="store_true", help="do not update the website manifest")
     parser.add_argument("--only", default="", help="comma-separated source/mirror text filters")
     parser.add_argument("--skip", default="")
     parser.add_argument("--apply", action="store_true", help="create repositories and seed files")
@@ -265,9 +352,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "packager_ref": args.packager_ref,
         "apply": args.apply,
         "trigger": args.trigger,
+        "site_manifest": None,
         "products": [],
         "failures": [],
     }
+    applied_products: List[Product] = []
 
     for product in products:
         print(f"{product.source_repo} -> {product.mirror_repo}")
@@ -307,11 +396,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             entry["mirror_exists"] = gh.get_repo(product.mirror_repo) is not None
             entry["action"] = "planned"
         report["products"].append(entry)
+        if args.apply and entry.get("action") in ("created", "updated", "unchanged"):
+            applied_products.append(product)
         print(
             f"  action={entry.get('action')} "
             f"releases={entry.get('release_count')} "
             f"zips={len(entry.get('zip_assets') or [])}"
         )
+
+    if args.apply and not args.no_site_manifest and applied_products:
+        try:
+            report["site_manifest"] = sync_site_manifest(
+                gh,
+                applied_products,
+                site_repo=args.site_repo,
+                site_manifest=args.site_manifest,
+            )
+        except (GitHubError, ApiError, OSError, ValueError) as exc:
+            report["site_manifest"] = {"action": "failed", "error": str(exc)}
+            report["failures"].append(
+                {"mirror_repo": args.site_repo, "error": str(exc)}
+            )
+            print(f"error: could not update the site manifest: {exc}")
 
     write_report(report, Path(args.out))
     print(f"wrote {args.out}")

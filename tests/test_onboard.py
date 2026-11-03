@@ -56,6 +56,44 @@ def products():
     return manifest.group_products(manifest.parse_manifest(SAMPLE))
 
 
+class ManifestSyncTests(unittest.TestCase):
+    def test_portable_zips_are_added_only_to_matching_img_rows(self):
+        text, rows = onboard.set_portable_zips(
+            SAMPLE,
+            {
+                "y1-community/y1-stock-rom": "y1-community/y1-stock-rom-mirror",
+                "jarvissax/rondo": "y1-community/rondo-mirror",
+            },
+        )
+        self.assertEqual(rows, 3)
+        self.assertEqual(text.count('portable_zips="y1-community/y1-stock-rom-mirror"'), 2)
+        self.assertEqual(text.count('portable_zips="y1-community/rondo-mirror"'), 1)
+
+    def test_portable_zips_are_updated_and_idempotent(self):
+        text, rows = onboard.set_portable_zips(
+            SAMPLE,
+            {"y1-community/y1-stock-rom": "y1-community/y1-stock-rom-mirror"},
+        )
+        self.assertEqual(rows, 2)
+        again, rows_again = onboard.set_portable_zips(
+            text, {"y1-community/y1-stock-rom": "y1-community/y1-stock-rom-mirror"}
+        )
+        self.assertEqual(rows_again, 0)
+        self.assertEqual(again, text)
+
+    def test_sync_site_manifest_commits_once(self):
+        fake = FakeGitHub()
+        fake.files[("y1-community/Innioasis-Updater", "slidia_manifest.xml")] = {
+            "text": SAMPLE,
+            "sha": "manifest-sha",
+        }
+        report = onboard.sync_site_manifest(fake, products(), log=lambda _message: None)
+        self.assertEqual(report["action"], "updated")
+        self.assertEqual(report["rows"], 3)
+        updated = fake.files[("y1-community/Innioasis-Updater", "slidia_manifest.xml")]["text"]
+        self.assertIn('portable_zips="y1-community/rondo-mirror"', updated)
+
+
 class ApplyTests(unittest.TestCase):
     def test_creates_repo_and_seeds_managed_files(self):
         fake = FakeGitHub()
@@ -167,6 +205,7 @@ class MainTests(unittest.TestCase):
                         str(manifest_path),
                         "--no-check-releases",
                         "--apply",
+                        "--no-site-manifest",
                         "--only",
                         "rondo",
                         "--out",
