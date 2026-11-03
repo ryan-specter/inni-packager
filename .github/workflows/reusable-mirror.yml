@@ -40,10 +40,6 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: portable-flashing-packages
-  cancel-in-progress: false
-
 jobs:
   mirror:
     runs-on: ubuntu-latest
