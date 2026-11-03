@@ -85,7 +85,14 @@ jobs:
         run: |
           set -euo pipefail
           python .packager/tools/source_sync.py --source .source --target . --source-repo "${{ steps.source.outputs.repo }}"
-          git add -A -- . ':(exclude).packager' ':(exclude).source' ':(exclude)mirror-report.json'
+          restore_checkouts() {
+            if [ -d "$RUNNER_TEMP/innioasis-packager" ]; then mv "$RUNNER_TEMP/innioasis-packager" .packager; fi
+            if [ -d "$RUNNER_TEMP/innioasis-source" ]; then mv "$RUNNER_TEMP/innioasis-source" .source; fi
+          }
+          trap restore_checkouts EXIT
+          mv .packager "$RUNNER_TEMP/innioasis-packager"
+          mv .source "$RUNNER_TEMP/innioasis-source"
+          git add -A
           if git diff --cached --quiet; then
             echo "source tree is unchanged"
           else
@@ -94,6 +101,8 @@ jobs:
             git commit -m "Mirror source repository"
             git push || { git pull --rebase --autostash && git push; }
           fi
+          restore_checkouts
+          trap - EXIT
 
       - name: Package and publish portable releases
         env:
