@@ -276,7 +276,9 @@ class IndexPublishTests(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
 
     def test_publish_requires_a_mirror_repo(self):
-        cfg = mirrorspec.load_config(str(ROOT / "mirror.config.json"))
+        # Actions sets GITHUB_REPOSITORY, which load_config treats as a default
+        # mirror; pass an empty environment to test the unset case.
+        cfg = mirrorspec.load_config(str(ROOT / "mirror.config.json"), environ={})
         fake = FakeIndexGitHub()
         self.assertFalse(pm.publish_index(cfg, fake, {}, quiet))
         self.assertEqual(fake.calls, [])
