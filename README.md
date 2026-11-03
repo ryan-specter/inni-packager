@@ -37,9 +37,11 @@ notes are copied verbatim; a short provenance footer is appended on GitHub.
 The same original title and notes are stored in `index.json` as `source_title`
 and `source_notes`, so the site can render clean pages without the footer.
 
-The mirror repository's `README.md` is refreshed from the source repository on
-each run (`source_readme` in the config). Set `source_readme.path` to a
-different file if the mirror keeps its own operator README.
+Each mirror also copies the source repository's files, excluding `.github`
+workflows and actions. The mirror keeps its own `mirror.config.json`, generated
+`index.json`, and caller workflow, so upstream automation is never copied. The
+source README is part of that copy; if the source has no README, a minimal
+README is generated so the mirror always has a landing page.
 
 Because `fw_package.ini` sits next to the single `*scatter*.txt`, Updater CE
 detects the release on launch, fills in the software name, version, model and

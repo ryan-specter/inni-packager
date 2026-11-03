@@ -50,6 +50,19 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Read source repository
+        id: source
+        run: |
+          echo "repo=$(python -c 'import json; print(json.load(open("mirror.config.json"))["source_repo"])')" >> "$GITHUB_OUTPUT"
+
+      - name: Check out source repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.source.outputs.repo }}
+          path: .source
+          fetch-depth: 1
+          token: ${{ secrets.MIRROR_TOKEN || github.token }}
+
       - name: Check out the packager
         uses: actions/checkout@v4
         with:
@@ -67,7 +80,22 @@ jobs:
       - name: Test the packager
         run: python -m unittest discover -s .packager/tests -v
 
-      - name: Mirror releases
+      - name: Mirror source repository files
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          set -euo pipefail
+          python .packager/tools/source_sync.py --source .source --target . --source-repo "${{ steps.source.outputs.repo }}"
+          git add -A -- . ':(exclude).packager' ':(exclude).source' ':(exclude)mirror-report.json'
+          if git diff --cached --quiet; then
+            echo "source tree is unchanged"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Mirror source repository"
+            git push || { git pull --rebase --autostash && git push; }
+          fi
+
+      - name: Package and publish portable releases
         env:
           GH_TOKEN: ${{ secrets.MIRROR_TOKEN || github.token }}
           GITHUB_TOKEN: ${{ secrets.MIRROR_TOKEN || github.token }}
