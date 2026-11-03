@@ -1,6 +1,8 @@
 name: Onboard y1-community firmware mirrors
 
 on:
+  schedule:
+    - cron: "23 4 * * *"
   workflow_dispatch:
     inputs:
       apply:
@@ -67,7 +69,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.MIRROR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.MIRROR_TOKEN }}
-          APPLY: ${{ inputs.apply }}
+          APPLY: ${{ github.event_name == 'schedule' || inputs.apply }}
           TRIGGER: ${{ inputs.trigger }}
           UPDATE_CONFIG: ${{ inputs.update_config }}
           ONLY: ${{ inputs.only }}
