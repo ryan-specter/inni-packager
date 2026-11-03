@@ -126,7 +126,7 @@ jobs:
           python .packager/tools/portable_mirror.py "${args[@]}"
 
       - name: Commit the download index
-        if: ${{ inputs.dry_run != true }}
+        if: ${{ always() && inputs.dry_run != true }}
         run: |
           set -euo pipefail
           if [ -n "$(git status --porcelain -- index.json)" ]; then

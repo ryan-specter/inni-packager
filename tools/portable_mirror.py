@@ -804,6 +804,13 @@ def sync(args) -> int:
                     report["failures"].append(
                         {"tag": tag, "error": "; ".join(result["failures"])}
                     )
+            elif result["action"] == "failed":
+                # A release whose packages could not be built must fail the
+                # run; otherwise the workflow reports success having published
+                # nothing for that tag.
+                report["failures"].append(
+                    {"tag": tag, "error": str(result.get("reason") or "packaging failed")}
+                )
             elif result["action"] == "skipped":
                 index_updates[tag] = None
 
@@ -822,6 +829,7 @@ def sync(args) -> int:
             shutil.rmtree(work_root, ignore_errors=True)
 
     report["finished_at"] = utcnow()
+    report["failed"] = bool(report["failures"])
     report_path = Path(args.json_report) if args.json_report else Path("mirror-report.json")
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     write_summary(report, log)

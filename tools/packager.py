@@ -122,13 +122,20 @@ def _copy_info(
     target.create_system = info.create_system
     target.comment = info.comment
     target.compress_type = compress_type
+    # Declare the size so zipfile selects ZIP64 for entries that expand past
+    # 4 GiB.  Large sparse partition images inside a firmware zip do, and
+    # streaming them into a non-ZIP64 entry fails with "File size too large,
+    # try using force_zip64".
+    target.file_size = info.file_size
 
     if name.endswith("/") or _is_symlink(info):
         # Directories and symlinks are stored: a symlink's "content" is its
         # target path, and deflating it would not help extraction.
         dst.writestr(target, src.read(info))
         return
-    with src.open(info) as reader, dst.open(target, "w") as writer:
+    with src.open(info) as reader, dst.open(
+        target, "w", force_zip64=target.file_size * 1.05 > zipfile.ZIP64_LIMIT
+    ) as writer:
         shutil.copyfileobj(reader, writer, BUFFER_SIZE)
 
 

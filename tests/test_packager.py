@@ -211,6 +211,39 @@ class PackagerTests(unittest.TestCase):
         self.assertIn("SP_Flash_Tool/sub/data.bin", names)
         self.assertNotIn("SP_Flash_Tool/README.md", names)
 
+    def test_large_entries_use_zip64(self):
+        # Sparse partition images expand well past 4 GiB.  Streaming such an
+        # entry into a non-ZIP64 member raises "File size too large, try using
+        # force_zip64"; shrink the limit instead of writing 4 GiB.
+        big = self.tmp / "big.zip"
+        payload = os.urandom(16 * 1024)
+        write_zip(
+            big,
+            [
+                ("MT6572_Android_scatter.txt", b"scatter", FILE_MODE),
+                ("system.img", payload, FILE_MODE),
+            ],
+        )
+        original = zipfile.ZIP64_LIMIT
+        zipfile.ZIP64_LIMIT = 4096
+        try:
+            out = self.tmp / "big-windows.zip"
+            result = build_portable_package(
+                self.windows_tool,
+                inspect_firmware(big),
+                self.cfg.platform("windows"),
+                out,
+                self.ini,
+                "Original Software",
+                "1",
+                "big.zip",
+            )
+        finally:
+            zipfile.ZIP64_LIMIT = original
+        with zipfile.ZipFile(out) as archive:
+            self.assertEqual(archive.read("SP_Flash_Tool/system.img"), payload)
+        self.assertGreater(result.size, len(payload))
+
     def test_bad_zip_raises(self):
         broken = self.tmp / "broken.zip"
         broken.write_bytes(b"not a zip")
