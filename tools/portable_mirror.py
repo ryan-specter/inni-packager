@@ -300,6 +300,30 @@ def write_index(cfg: MirrorConfig, index: Mapping[str, Any], path: Path, log: Lo
     return True
 
 
+def publish_index(
+    cfg: MirrorConfig, gh: GitHub, index: Mapping[str, Any], log: Log
+) -> bool:
+    """Commit index.json to the mirror repository.
+
+    CI checks the mirror out and commits the file itself.  A local backfill has
+    no checkout, so it publishes the same content through the contents API.
+    """
+
+    if not cfg.mirror_repo:
+        log("  mirror_repo is not set; index was not published")
+        return False
+    text = json.dumps(index, indent=2, sort_keys=False) + "\n"
+    changed = gh.put_file(
+        cfg.mirror_repo,
+        "index.json",
+        text,
+        "Update portable package index",
+        cfg.branch,
+    )
+    log(f"  index {'published' if changed else 'unchanged on GitHub'}")
+    return changed
+
+
 def download_updater_files(
     cfg: MirrorConfig,
     gh: GitHub,
@@ -822,6 +846,8 @@ def sync(args) -> int:
         if not args.skip_index and not args.dry_run:
             index = make_index(cfg, index_updates, previous_index, readme_info)
             write_index(cfg, index, index_path, log)
+            if getattr(args, "publish_index", False):
+                publish_index(cfg, gh, index, log)
     finally:
         if args.keep_work:
             log(f"work directory: {work_root}")
@@ -990,7 +1016,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     sub = parser.add_subparsers(dest="command", required=True)
     common = _common_options()
-    sub.add_parser("sync", parents=[common], help="build and publish every release")
+    sync_cmd = sub.add_parser(
+        "sync", parents=[common], help="build and publish every release"
+    )
+    sync_cmd.add_argument(
+        "--publish-index",
+        action="store_true",
+        help="commit index.json to the mirror repository (for local runs)",
+    )
     build_cmd = sub.add_parser(
         "build", parents=[common], help="build one release locally, without uploading"
     )

@@ -148,7 +148,14 @@ python3 tools/portable_mirror.py build --tag 3.1.2 --platforms windows --out dis
 
 # Full sync; add --dry-run to build everything without publishing
 python3 tools/portable_mirror.py sync --dry-run --limit 1
+
+# Backfill every mirror from this machine, in resumable batches
+tools/local-backfill.sh --limit 5
 ```
+
+`tools/local-backfill.sh` publishes `index.json` through the contents API and
+deletes each mirror's downloads and builds once its releases are on GitHub, so
+a long backfill does not accumulate files locally.
 
 `gh` is only needed for uploading and for private-repository downloads. Public
 repositories can be read without it.

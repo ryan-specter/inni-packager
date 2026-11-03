@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 import unittest
@@ -238,6 +239,47 @@ class FakeReadmeGitHub:
             }
         )
         return self.changed
+
+
+class FakeIndexGitHub:
+    def __init__(self, changed=True):
+        self.changed = changed
+        self.calls = []
+
+    def put_file(self, repo, path, text, message, branch):
+        self.calls.append(
+            {"repo": repo, "path": path, "text": text, "branch": branch}
+        )
+        return self.changed
+
+
+class IndexPublishTests(unittest.TestCase):
+    def cfg(self):
+        return mirrorspec.load_config(
+            str(ROOT / "mirror.config.json"), mirror_repo="owner/mirror"
+        )
+
+    def test_index_is_published_through_the_contents_api(self):
+        fake = FakeIndexGitHub()
+        index = {"schema": 1, "releases": [{"tag": "v1"}]}
+        changed = pm.publish_index(self.cfg(), fake, index, quiet)
+        self.assertTrue(changed)
+        self.assertEqual(fake.calls[0]["repo"], "owner/mirror")
+        self.assertEqual(fake.calls[0]["path"], "index.json")
+        self.assertEqual(fake.calls[0]["branch"], "main")
+        self.assertEqual(json.loads(fake.calls[0]["text"]), index)
+        self.assertTrue(fake.calls[0]["text"].endswith("\n"))
+
+    def test_unchanged_index_is_reported_but_not_an_error(self):
+        fake = FakeIndexGitHub(changed=False)
+        self.assertFalse(pm.publish_index(self.cfg(), fake, {}, quiet))
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_publish_requires_a_mirror_repo(self):
+        cfg = mirrorspec.load_config(str(ROOT / "mirror.config.json"))
+        fake = FakeIndexGitHub()
+        self.assertFalse(pm.publish_index(cfg, fake, {}, quiet))
+        self.assertEqual(fake.calls, [])
 
 
 class ReadmeSyncTests(unittest.TestCase):
