@@ -82,12 +82,17 @@ enum NativeSelfTest {
         try Data("da".utf8).write(
             to: portableRoot.appendingPathComponent("SP_Flash_Tool/MTK_AllInOne_DA.bin")
         )
+        // Updater CE ships reference scatters of its own; they must not reach a package.
+        let compat = portableRoot.appendingPathComponent("_internal/assets/compat", isDirectory: true)
+        try manager.createDirectory(at: compat, withIntermediateDirectories: true)
+        try Data("ref".utf8).write(to: compat.appendingPathComponent("MT6572_Android_scatter.txt"))
+        try Data("lib".utf8).write(to: compat.appendingPathComponent("libpng12.so.0"))
         let portableZip = root.appendingPathComponent("portable.zip")
         _ = try await NativeShell.require(
             "/usr/bin/zip",
             arguments: [
                 "-9", "-r", "-y", "-q", "-X", portableZip.path,
-                "Test.app", "SP_Flash_Tool",
+                "Test.app", "SP_Flash_Tool", "_internal",
             ],
             workingDirectory: portableRoot
         )
@@ -220,7 +225,9 @@ enum NativeSelfTest {
               manager.fileExists(atPath: sp.appendingPathComponent("fw_package.ini").path),
               manager.fileExists(atPath: sp.appendingPathComponent("history.ini").path),
               manager.fileExists(atPath: windowsExtract.appendingPathComponent("fw_package.ini").path),
-              !manager.fileExists(atPath: sp.appendingPathComponent("preserve_data_scatter.txt").path) else {
+              !manager.fileExists(atPath: sp.appendingPathComponent("preserve_data_scatter.txt").path),
+              !manager.fileExists(atPath: windowsExtract.appendingPathComponent("_internal/assets/compat/MT6572_Android_scatter.txt").path),
+              manager.fileExists(atPath: windowsExtract.appendingPathComponent("_internal/assets/compat/libpng12.so.0").path) else {
             throw selfTestError("Windows package layout is wrong")
         }
         let historyText = try String(contentsOf: sp.appendingPathComponent("history.ini"), encoding: .utf8)
