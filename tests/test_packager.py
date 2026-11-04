@@ -68,6 +68,10 @@ class PackagerTests(unittest.TestCase):
                 ("SP_Flash_Tool/history.ini", b"[old]\n", FILE_MODE),
                 ("InnioasisUpdater", b"python", FILE_MODE),
                 ("_internal/base_library.zip", b"zip", FILE_MODE),
+                ("_internal/assets/compat/MT6572_Android_scatter.txt", b"ref", FILE_MODE),
+                ("_internal/assets/compat/MT6582_Android_scatter.txt", b"ref", FILE_MODE),
+                ("_internal/assets/compat/libpng12.so.0", b"lib", FILE_MODE),
+                ("SP_Flash_Tool/dl_without_scatter.xml", b"<xml/>", FILE_MODE),
                 ("__MACOSX/._InnioasisUpdater", b"junk", FILE_MODE),
                 ("_MACOSX/._flash_tool.exe", b"junk", FILE_MODE),
             ],
@@ -303,6 +307,15 @@ class PackagerTests(unittest.TestCase):
         self.assertIn("SP_Flash_Tool/MTK_AllInOne_DA.bin", names)
         self.assertEqual(names.count("SP_Flash_Tool/history.ini"), 1)
         self.assert_no_macos_metadata(names)
+        # The portable app's own reference scatters never ship; the firmware's
+        # scatter is the only one in the whole package.  Other app files stay.
+        self.assertEqual(
+            [n for n in names if n.lower().endswith(".txt") and "scatter" in n.lower()],
+            ["SP_Flash_Tool/MT6572_Android_scatter.txt"],
+        )
+        self.assertIn("_internal/assets/compat/libpng12.so.0", names)
+        self.assertIn("SP_Flash_Tool/dl_without_scatter.xml", names)
+        self.assertIn("_internal/base_library.zip", names)
 
         with zipfile.ZipFile(out) as archive:
             history = archive.read("SP_Flash_Tool/history.ini").decode("utf-8")

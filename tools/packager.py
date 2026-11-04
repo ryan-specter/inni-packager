@@ -116,6 +116,15 @@ def _safe_name(raw: str) -> Optional[str]:
     return clean + ("/" if is_dir else "")
 
 
+def _is_scatter_name(name: str) -> bool:
+    """True for a ``*scatter*.txt`` file entry (any folder, any case)."""
+
+    if name.endswith("/"):
+        return False
+    base = posixpath.basename(name).lower()
+    return base.endswith(".txt") and "scatter" in base
+
+
 def _is_symlink(info: zipfile.ZipInfo) -> bool:
     return stat.S_ISLNK(info.external_attr >> 16)
 
@@ -626,6 +635,12 @@ def build_portable_package(
                             continue
                     if name.lower() in overrides:
                         # The firmware or our metadata replaces this file.
+                        continue
+                    if _is_scatter_name(name):
+                        # The portable app carries reference scatters of its
+                        # own (``_internal/assets/compat``).  The package's
+                        # only scatter must be the firmware's.
+                        skipped.append(info.filename)
                         continue
                     compress = (
                         zipfile.ZIP_STORED

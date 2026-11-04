@@ -39,7 +39,10 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 # 9: macOS metadata trees (__MACOSX/_MACOSX) are stripped from every package.
 # 10: every package carries only the one scatter declared by its source zip;
 #     preserve-data and alternate scatters are never copied.
-BUILDER_VERSION = 10
+# 11: reference scatters shipped inside the portable app itself
+#     (_internal/assets/compat) are stripped, so the firmware's scatter is the
+#     only scatter anywhere in a Windows/Linux package.
+BUILDER_VERSION = 11
 
 DEFAULT_BRANCH = "main"
 DEFAULT_TITLE_PREFIX = "Portable Flashing Package: "

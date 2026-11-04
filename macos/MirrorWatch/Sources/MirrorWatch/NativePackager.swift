@@ -311,6 +311,10 @@ enum NativePackager {
         } else {
             try await extractZip(portableZip, to: stage)
             removeJunk(in: stage)
+            // The portable app ships reference scatters of its own
+            // (_internal/assets/compat). Strip them before the firmware goes
+            // in, so the firmware's scatter is the only one in the package.
+            removeScatters(in: stage)
             let top = try manager.contentsOfDirectory(
                 at: stage,
                 includingPropertiesForKeys: [.isDirectoryKey],
@@ -704,6 +708,23 @@ enum NativePackager {
                 try? manager.removeItem(at: url)
             }
         }
+    }
+
+    private static func removeScatters(in root: URL) {
+        let manager = FileManager.default
+        guard let enumerator = manager.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) else {
+            return
+        }
+        var doomed: [URL] = []
+        while let url = enumerator.nextObject() as? URL {
+            let lower = url.lastPathComponent.lowercased()
+            guard lower.hasSuffix(".txt"), lower.contains("scatter"),
+                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+                continue
+            }
+            doomed.append(url)
+        }
+        for url in doomed { try? manager.removeItem(at: url) }
     }
 
     private static func updateInfoPlist(_ url: URL) throws {

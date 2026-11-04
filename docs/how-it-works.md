@@ -142,7 +142,18 @@ the package scatter. A portable package carries exactly one scatter — the one
 declared by the original firmware zip — plus the images it lists and an
 optional updater image. Any other scatter in that zip (preserve-data or an
 alternate layout) is never copied, whatever repository it came from. A zip that
-offers several equally valid scatters is refused rather than guessed at.
+offers several equally valid scatters is refused rather than guessed at. The
+portable app's own reference scatters (`_internal/assets/compat`) are stripped
+from Windows/Linux packages too, so the firmware's scatter is the only one
+anywhere in the archive.
+
+The same rule covers the portable app itself: Updater CE's Windows/Linux zips
+carry reference scatters under `_internal/assets/compat/`, and those are
+stripped while the rest of the app (including `libpng12.so.0` in the same
+folder) is kept. The firmware's scatter is therefore the only `*scatter*.txt`
+anywhere in a Windows/Linux package. The macOS package keeps the signed DMG
+byte-for-byte, so nothing inside the disk image is altered; its `firmware/`
+folder holds the one firmware scatter.
 
 If a release has no eligible ZIP after filtering, the release is skipped, and
 any stale index entry for that tag is removed. The original release is still
