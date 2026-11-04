@@ -138,13 +138,11 @@ update with no scatter and no partition images; wrapping it would produce a
 useless flashing package.
 
 A file whose name contains `preserve` is treated as an alternative scatter, not
-the package scatter. Generated packages contain only the selected scatter, the
-images it lists and an optional updater image; other files are stripped.
-
-For `schulzcode/y2linux` and `schulzcode/y2reborn`, generated packages also drop
-any `*.txt` whose name contains `preserve`. Updater CE 2.5.2 preserves the
-userdata partition itself, and a second scatter in the same folder would make
-the package ambiguous.
+the package scatter. A portable package carries exactly one scatter — the one
+declared by the original firmware zip — plus the images it lists and an
+optional updater image. Any other scatter in that zip (preserve-data or an
+alternate layout) is never copied, whatever repository it came from. A zip that
+offers several equally valid scatters is refused rather than guessed at.
 
 If a release has no eligible ZIP after filtering, the release is skipped, and
 any stale index entry for that tag is removed. The original release is still
@@ -325,9 +323,10 @@ download-event estimate, not unique installs.
 
 ## Edge cases
 
-- **Multiple scatters in one zip.** All are copied. `history.ini` points at the
-  best one: non-`preserve_data` first, then a unique `*ndroid_scatter*.txt`,
-  then the only candidate.
+- **Multiple scatters in one zip.** Only one is ever packaged. A unique
+  `*ndroid_scatter*.txt` is chosen when present, a single remaining candidate is
+  used as-is, and a genuinely ambiguous set is refused by `history.ini` and the
+  build alike.
 - **Scatter inside a folder.** The folder prefix is stripped, so the package
   always has the scatter at the top of `SP_Flash_Tool/`.
 - **Duplicate destinations.** First firmware entry wins; later duplicates are

@@ -37,23 +37,15 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 # 8: SP Flash Tool history names the packaged scatter and DA with bare names,
 #    including a firmware-provided DA when one exists.
 # 9: macOS metadata trees (__MACOSX/_MACOSX) are stripped from every package.
-BUILDER_VERSION = 9
+# 10: every package carries only the one scatter declared by its source zip;
+#     preserve-data and alternate scatters are never copied.
+BUILDER_VERSION = 10
 
 DEFAULT_BRANCH = "main"
 DEFAULT_TITLE_PREFIX = "Portable Flashing Package: "
 DEFAULT_UPDATER_REPO = "y1-community/updater-ce-neo"
 DEFAULT_README_PATH = "README.md"
 DEFAULT_README_COMMIT = "Mirror source README"
-
-# Updater CE 2.5.2 preserves userdata itself, so these sources must not ship a
-# second, preserve-data scatter in the generated package.
-PRESERVE_TXT_REPOS = frozenset({"schulzcode/y2linux", "schulzcode/y2reborn"})
-
-
-def drops_preserve_txt(source_repo: str) -> bool:
-    """Whether generated packages for ``source_repo`` drop preserve-text files."""
-
-    return str(source_repo or "").strip().lower() in PRESERVE_TXT_REPOS
 
 # Suffixes this project owns.  Used to keep our own output out of the source
 # asset selection (which matters when a clone points at another mirror).
@@ -669,9 +661,6 @@ def config_fingerprint(cfg: MirrorConfig) -> str:
             for r in cfg.rules
         ],
     }
-    if drops_preserve_txt(cfg.source_repo):
-        # Only these configs need a new fingerprint; other mirrors keep theirs.
-        payload["drop_preserve_txt"] = True
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()

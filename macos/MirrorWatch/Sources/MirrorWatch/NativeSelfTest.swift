@@ -113,6 +113,7 @@ enum NativeSelfTest {
         try Data("boot".utf8).write(to: rom.appendingPathComponent("boot.img"))
         try Data("system".utf8).write(to: rom.appendingPathComponent("system.img"))
         try Data("unused".utf8).write(to: rom.appendingPathComponent("unused.bin"))
+        try Data("preserve".utf8).write(to: rom.appendingPathComponent("preserve_data_scatter.txt"))
         let firmwareZip = root.appendingPathComponent("firmware.zip")
         _ = try await NativeShell.require(
             "/usr/bin/zip",
@@ -173,7 +174,8 @@ enum NativeSelfTest {
               manager.fileExists(atPath: macReadme.path),
               !macRootNames.contains("Install Firmware.app"),
               !macRootNames.contains("Firmware"),
-              !manager.fileExists(atPath: macFirmware.appendingPathComponent("unused.bin").path) else {
+              !manager.fileExists(atPath: macFirmware.appendingPathComponent("unused.bin").path),
+              !manager.fileExists(atPath: macFirmware.appendingPathComponent("preserve_data_scatter.txt").path) else {
             throw selfTestError("macOS package layout is wrong")
         }
         let readmeText = try String(contentsOf: macReadme, encoding: .utf8)
@@ -217,7 +219,8 @@ enum NativeSelfTest {
               manager.fileExists(atPath: sp.appendingPathComponent("MTK_AllInOne_DA.bin").path),
               manager.fileExists(atPath: sp.appendingPathComponent("fw_package.ini").path),
               manager.fileExists(atPath: sp.appendingPathComponent("history.ini").path),
-              manager.fileExists(atPath: windowsExtract.appendingPathComponent("fw_package.ini").path) else {
+              manager.fileExists(atPath: windowsExtract.appendingPathComponent("fw_package.ini").path),
+              !manager.fileExists(atPath: sp.appendingPathComponent("preserve_data_scatter.txt").path) else {
             throw selfTestError("Windows package layout is wrong")
         }
         let historyText = try String(contentsOf: sp.appendingPathComponent("history.ini"), encoding: .utf8)

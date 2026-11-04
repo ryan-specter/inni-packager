@@ -37,7 +37,6 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from mirrorspec import (
     Platform,
-    drops_preserve_txt,
     macos_dmg_readme,
     macos_readme,
 )
@@ -197,7 +196,7 @@ def inspect_firmware(path: Path, source_repo: str = "") -> FirmwarePackage:
         groups.setdefault(posixpath.dirname(name), []).append(name)
 
     # Prefer a scatter at the zip root; otherwise the folder with the most
-    # scatter files (a full package sometimes ships preserve_data variants).
+    # non-preserve scatter files.
     if "" in groups:
         scatter_dir = ""
     else:
@@ -207,12 +206,9 @@ def inspect_firmware(path: Path, source_repo: str = "") -> FirmwarePackage:
 
     basenames = [posixpath.basename(n) for n in groups[scatter_dir]]
     chosen: Optional[str] = None
-    non_preserve = [n for n in basenames if "preserve_data" not in n.lower()]
-    android = [n for n in non_preserve if "ndroid_scatter" in n.lower()]
+    android = [n for n in basenames if "ndroid_scatter" in n.lower()]
     if len(android) == 1:
         chosen = android[0]
-    elif len(non_preserve) == 1:
-        chosen = non_preserve[0]
     elif len(basenames) == 1:
         chosen = basenames[0]
 
@@ -363,13 +359,13 @@ def _optional_package_file(rel: str) -> bool:
 
 def _firmware_plan(
     firmware: FirmwarePackage,
-    drop_preserve_txt: bool = False,
 ) -> Tuple[List[Tuple[str, str, bool]], List[str]]:
     """Map firmware entries to paths relative to the scatter folder.
 
     Only the selected scatter, the images it lists and the optional updater
     image are kept.  Other files in the firmware zip (for example a surrounding
-    SP Flash Tool tree) are intentionally stripped.
+    SP Flash Tool tree) are intentionally stripped, and no other scatter file
+    is ever carried into the package.
     """
 
     plan: List[Tuple[str, str, bool]] = []
@@ -412,11 +408,14 @@ def _firmware_plan(
             basename = posixpath.basename(rel.rstrip("/"))
             if not is_dir:
                 present.add(rel.lower())
+            # A portable package carries exactly one scatter: the one the
+            # original firmware zip declares.  Preserve-data and alternate
+            # scatter files are never copied, whatever the source repo.
             if (
-                drop_preserve_txt
-                and not is_dir
+                not is_dir
                 and basename.lower().endswith(".txt")
-                and "preserve" in basename.lower()
+                and "scatter" in basename.lower()
+                and (not chosen or basename.lower() != chosen.lower())
             ):
                 skipped.append(info.filename)
                 continue
@@ -485,8 +484,12 @@ def build_portable_package(
     if out_path.exists():
         out_path.unlink()
 
-    drop_preserve_txt = drops_preserve_txt(source_repo)
-    plan, skipped = _firmware_plan(firmware, drop_preserve_txt=drop_preserve_txt)
+    if firmware.scatters and not firmware.chosen_scatter:
+        raise PackagingError(
+            f"{firmware.path.name} has {len(firmware.scatters)} scatter files; "
+            "a portable package must carry exactly one"
+        )
+    plan, skipped = _firmware_plan(firmware)
     dmg_layout = platform.layout == "beside_dmg"
     if dmg_layout and tool_zip_path.suffix.lower() != ".dmg":
         raise PackagingError(
@@ -539,14 +542,7 @@ def build_portable_package(
                     seen.add(da_dest.lower())
             extra_files["fw_package.ini"] = ini_text.encode("utf-8")
             extra_files[sp_prefix + "fw_package.ini"] = ini_text.encode("utf-8")
-            scatter_name = firmware.chosen_scatter or (
-                firmware.scatters[0] if firmware.scatters else "scatter.txt"
-            )
-            if drop_preserve_txt and "preserve" in scatter_name.lower():
-                scatter_name = next(
-                    (n for n in firmware.scatters if "preserve" not in n.lower()),
-                    "scatter.txt",
-                )
+            scatter_name = firmware.chosen_scatter or "scatter.txt"
             extra_files[sp_prefix + "history.ini"] = HISTORY_INI.format(
                 scatter=scatter_name, da=da_name
             ).encode("utf-8")

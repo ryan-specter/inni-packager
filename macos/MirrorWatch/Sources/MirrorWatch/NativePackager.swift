@@ -129,10 +129,16 @@ struct FirmwareArchive: Sendable {
     let scatters: [String]
     let chosenScatter: String?
 
-    var hasScatter: Bool { chosenScatter != nil || !scatters.isEmpty }
+    var hasScatter: Bool { chosenScatter != nil }
 
     func plan(sourceRepo: String) async throws -> [FirmwareItem] {
         guard hasScatter else {
+            if scatters.count > 1 {
+                throw NativePackagingError.missingFirmware(
+                    "\(url.lastPathComponent) has \(scatters.count) scatter files; "
+                        + "a portable package must carry exactly one"
+                )
+            }
             throw NativePackagingError.missingScatter(url.lastPathComponent)
         }
         var required = Set<String>()
@@ -147,7 +153,6 @@ struct FirmwareArchive: Sendable {
         let prefixLower = prefix.lowercased()
         var present = Set<String>()
         var result: [FirmwareItem] = []
-        let dropPreserve = ["schulzcode/y2linux", "schulzcode/y2reborn"].contains(sourceRepo.lowercased())
         for entry in entries where !entry.isDirectory {
             let relative: String
             if prefix.isEmpty {
@@ -160,7 +165,12 @@ struct FirmwareArchive: Sendable {
             present.insert(relative.lowercased())
             let base = (relative as NSString).lastPathComponent
             let lower = base.lowercased()
-            if dropPreserve && lower.hasSuffix(".txt") && lower.contains("preserve") { continue }
+            // Exactly one scatter travels with the package: the one the
+            // firmware zip declares.  Never copy preserve-data or alternates.
+            if lower.hasSuffix(".txt"), lower.contains("scatter"),
+               lower != chosenScatter?.lowercased() {
+                continue
+            }
             if lower == "history.ini" || lower == "fw_package.ini" { continue }
             if !required.isEmpty {
                 let path = relative.lowercased()
@@ -227,17 +237,14 @@ enum NativePackager {
             }.first ?? ""
         }
         let scatters = (groups[dir] ?? []).map { ($0 as NSString).lastPathComponent }
-        let nonPreserve = scatters.filter { !$0.lowercased().contains("preserve_data") }
-        let android = nonPreserve.filter { $0.lowercased().contains("ndroid_scatter") }
+        let android = scatters.filter { $0.lowercased().contains("ndroid_scatter") }
         let chosen: String?
         if android.count == 1 {
             chosen = android[0]
-        } else if nonPreserve.count == 1 {
-            chosen = nonPreserve[0]
         } else if scatters.count == 1 {
             chosen = scatters[0]
         } else {
-            chosen = nonPreserve.first
+            chosen = nil
         }
         return FirmwareArchive(
             url: url,
@@ -329,7 +336,7 @@ enum NativePackager {
                 to: sp.appendingPathComponent("fw_package.ini"),
                 options: .atomic
             )
-            let scatter = firmware.chosenScatter ?? firmware.scatters.first ?? "scatter.txt"
+            let scatter = firmware.chosenScatter ?? "scatter.txt"
             let toolFiles = (try? manager.contentsOfDirectory(atPath: sp.path)) ?? []
             let preferredDA = ["MTK_AllInOne_DA.bin", "MTK_AllInOneDA.bin"]
             let daName = preferredDA.first { candidate in

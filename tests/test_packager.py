@@ -118,8 +118,10 @@ class PackagerTests(unittest.TestCase):
         self.assertEqual(package.chosen_scatter, "MT6572_Android_scatter.txt")
         self.assertEqual(package.scatters, ["MT6572_Android_scatter.txt"])
 
-    def test_y2_repos_drop_preserve_txt(self):
-        for repo in ("schulzcode/y2linux", "schulzcode/Y2Reborn"):
+    def test_only_the_source_scatter_is_packed(self):
+        # Whatever the source repo, the package carries the firmware's own
+        # scatter and never an alternative (preserve-data) layout.
+        for repo in ("schulzcode/y2linux", "schulzcode/Y2Reborn", "schulzcode/other"):
             package = inspect_firmware(self.firmware, source_repo=repo)
             self.assertEqual(package.scatters, ["MT6572_Android_scatter.txt"])
             out = self.tmp / "rom-windows.zip"
@@ -135,7 +137,10 @@ class PackagerTests(unittest.TestCase):
                 source_repo=repo,
             )
             names = names_of(out)
-            self.assertNotIn("SP_Flash_Tool/preserve_data_scatter.txt", names)
+            self.assertEqual(
+                [n for n in names if n.lower().endswith("scatter.txt")],
+                ["SP_Flash_Tool/MT6572_Android_scatter.txt"],
+            )
             self.assertIn("SP_Flash_Tool/MT6572_Android_scatter.txt", names)
             with zipfile.ZipFile(out) as archive:
                 history = archive.read("SP_Flash_Tool/history.ini").decode("utf-8")
@@ -144,34 +149,45 @@ class PackagerTests(unittest.TestCase):
         mac_out = self.tmp / "rom-macos.zip"
         build_portable_package(
             self.mac_tool,
-            inspect_firmware(self.firmware, source_repo="schulzcode/y2linux"),
+            inspect_firmware(self.firmware, source_repo="schulzcode/other"),
             self.mac_app_platform,
             mac_out,
             self.ini,
             "Original Software",
             "3.1.2",
             "rom.zip",
-            source_repo="schulzcode/y2linux",
+            source_repo="schulzcode/other",
         )
         mac_names = names_of(mac_out)
         self.assertNotIn("Firmware/preserve_data_scatter.txt", mac_names)
-        self.assertIn("Firmware/MT6572_Android_scatter.txt", mac_names)
-
-        package = inspect_firmware(self.firmware, source_repo="schulzcode/other")
-        self.assertEqual(package.scatters, ["MT6572_Android_scatter.txt"])
-        out = self.tmp / "rom-other.zip"
-        build_portable_package(
-            self.windows_tool,
-            package,
-            self.cfg.platform("windows"),
-            out,
-            self.ini,
-            "Original Software",
-            "3.1.2",
-            "rom.zip",
-            source_repo="schulzcode/other",
+        self.assertEqual(
+            [n for n in mac_names if n.lower().endswith("scatter.txt")],
+            ["Firmware/MT6572_Android_scatter.txt"],
         )
-        self.assertIn("SP_Flash_Tool/preserve_data_scatter.txt", names_of(out))
+
+    def test_multiple_scatter_files_are_refused(self):
+        multi = self.tmp / "multi.zip"
+        write_zip(
+            multi,
+            [
+                ("MT6572_Android_scatter.txt", b"scatter", FILE_MODE),
+                ("MT6582_Android_scatter.txt", b"scatter", FILE_MODE),
+                ("boot.img", b"boot", FILE_MODE),
+            ],
+        )
+        package = inspect_firmware(multi)
+        self.assertIsNone(package.chosen_scatter)
+        with self.assertRaises(PackagingError):
+            build_portable_package(
+                self.windows_tool,
+                package,
+                self.cfg.platform("windows"),
+                self.tmp / "multi-windows.zip",
+                self.ini,
+                "Original Software",
+                "1",
+                "multi.zip",
+            )
 
     def test_only_scatter_listed_files_and_icon_are_packed(self):
         pruned = self.tmp / "pruned.zip"
