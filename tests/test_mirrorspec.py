@@ -86,6 +86,40 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("description", text)
         self.assertTrue(text.endswith("\r\n"))
 
+    def test_release_version_uses_title_semver(self):
+        self.assertEqual(
+            mirrorspec.release_version("baseline-215", "Y2Linux 1.0 Beta 9.3.7"),
+            "9.3.7",
+        )
+        self.assertEqual(
+            mirrorspec.release_version("build-20241010", "1.0.4 - Initial Release"),
+            "1.0.4",
+        )
+        self.assertEqual(
+            mirrorspec.release_version("git-tag-98", "0.6 Rockbox (ADB) (Wi-Fi)"),
+            "0.6",
+        )
+
+    def test_release_version_falls_back_to_tag_then_date(self):
+        self.assertEqual(
+            mirrorspec.release_version("v2.5.1", "Innioasis Updater CE"),
+            "2.5.1",
+        )
+        self.assertEqual(
+            mirrorspec.release_version("20261013", "rom_y1_type_a"),
+            "October 13 2026",
+        )
+        self.assertEqual(
+            mirrorspec.release_version("20260716-0131", "rom"),
+            "July 16 2026",
+        )
+
+    def test_release_version_falls_back_to_raw_tag(self):
+        self.assertEqual(
+            mirrorspec.release_version("baseline-215", "rom_y2.zip"),
+            "baseline-215",
+        )
+
     def test_title_prefix_is_idempotent(self):
         release = {"tag_name": "3.1.2", "name": "System Software 3.1.2"}
         title = mirrorspec.release_title(self.cfg, release)
@@ -148,6 +182,27 @@ class ConfigTests(unittest.TestCase):
             mirrorspec.release_fingerprint(self.cfg, two, updater),
         )
 
+    def test_fingerprint_changes_when_a_source_zip_is_replaced(self):
+        updater = {
+            "windows": {"tag": "2.5.1", "name": "w.zip", "size": 1, "id": 1},
+        }
+        one = {
+            "tag_name": "1",
+            "assets": [
+                {"name": "rom.zip", "size": 5, "id": 9, "digest": "sha256:aaa"}
+            ],
+        }
+        two = {
+            "tag_name": "1",
+            "assets": [
+                {"name": "rom.zip", "size": 5, "id": 9, "digest": "sha256:bbb"}
+            ],
+        }
+        self.assertNotEqual(
+            mirrorspec.release_fingerprint(self.cfg, one, updater),
+            mirrorspec.release_fingerprint(self.cfg, two, updater),
+        )
+
     def test_unknown_platform_is_rejected(self):
         with self.assertRaises(mirrorspec.ConfigError):
             mirrorspec.load_config(
@@ -158,6 +213,30 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(self.cfg.readme_enabled)
         self.assertEqual(self.cfg.readme_path, "README.md")
         self.assertEqual(self.cfg.readme_commit_message, "Mirror source README")
+
+    def test_beside_dmg_and_post_install_config(self):
+        raw = json.loads((ROOT / "mirror.config.json").read_text(encoding="utf-8"))
+        raw["platforms"] = {
+            "macos": {
+                "updater_asset": "Innioasis.Updater.for.Mac.dmg",
+                "suffix": "-macos.zip",
+                "layout": "beside_dmg",
+                "os": "macos",
+                "arch": "universal",
+                "updater_repo": "y1-community/innioasis-updater",
+            }
+        }
+        raw["post_install"] = ["https://innioasis.app/y2reborn_wifibt.html"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mirror.config.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            cfg = mirrorspec.load_config(str(path))
+        platform = cfg.platform("macos")
+        self.assertEqual(platform.layout, "beside_dmg")
+        self.assertEqual(platform.updater_repo, "y1-community/innioasis-updater")
+        self.assertEqual(
+            cfg.post_installs, ["https://innioasis.app/y2reborn_wifibt.html"]
+        )
 
     def test_readme_path_cannot_escape_the_repository(self):
         raw = json.loads((ROOT / "mirror.config.json").read_text(encoding="utf-8"))

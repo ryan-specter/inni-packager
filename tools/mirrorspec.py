@@ -19,6 +19,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -26,7 +27,17 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 # releases are rebuilt instead of being treated as up to date.
 # 2: macOS packages are Install Firmware.app with firmware in Firmware/.
 # 3: firmware zips are reduced to the scatter, its listed images and the icon.
-BUILDER_VERSION = 3
+# 4: fw_package.ini resolves the user-facing version from the release title.
+# 5: macOS uses the signed DMG beside a lowercase firmware/ folder, and every
+#    package includes the product's post-install instructions when present.
+# 6: the macOS DMG is renamed for users, its README explains Install from file,
+#    and release bodies start with generated device/platform download buttons.
+# 7: button SVGs are served from the mirror branch so GitHub renders them
+#    instead of returning the release-asset application/octet-stream download.
+# 8: SP Flash Tool history names the packaged scatter and DA with bare names,
+#    including a firmware-provided DA when one exists.
+# 9: macOS metadata trees (__MACOSX/_MACOSX) are stripped from every package.
+BUILDER_VERSION = 9
 
 DEFAULT_BRANCH = "main"
 DEFAULT_TITLE_PREFIX = "Portable Flashing Package: "
@@ -113,11 +124,12 @@ DEFAULT_PLATFORMS: Dict[str, Dict[str, Any]] = {
         "optional": True,
     },
     "macos": {
-        "updater_asset": "Innioasis.Updater.for.Mac.zip",
+        "updater_asset": "Innioasis.Updater.for.Mac.dmg",
         "suffix": "-macos.zip",
-        "layout": "beside_app",
+        "layout": "beside_dmg",
         "os": "macos",
         "arch": "universal",
+        "updater_repo": "y1-community/innioasis-updater",
     },
 }
 
@@ -138,6 +150,7 @@ class Platform:
     arch: str
     optional: bool = False
     pinned_tag: str = ""
+    updater_repo: str = ""
 
     def describe(self) -> str:
         return f"{self.key} ({self.os}/{self.arch}, {self.layout})"
@@ -176,6 +189,7 @@ class MirrorConfig:
     description: str
     rules: List[Rule]
     platforms: List[Platform]
+    post_installs: List[str] = field(default_factory=list)
     readme_enabled: bool = True
     readme_path: str = DEFAULT_README_PATH
     readme_commit_message: str = DEFAULT_README_COMMIT
@@ -300,8 +314,8 @@ def load_config(
         _expect(bool(base.get("suffix")), f"platforms.{key}.suffix is required")
         layout = base.get("layout") or "sp_flash_tool"
         _expect(
-            layout in ("sp_flash_tool", "beside_app"),
-            f"platforms.{key}.layout must be 'sp_flash_tool' or 'beside_app'",
+            layout in ("sp_flash_tool", "beside_app", "beside_dmg"),
+            f"platforms.{key}.layout must be 'sp_flash_tool', 'beside_app' or 'beside_dmg'",
         )
         built.append(
             Platform(
@@ -313,6 +327,7 @@ def load_config(
                 arch=str(base.get("arch") or ""),
                 optional=bool(base.get("optional")),
                 pinned_tag=str(base.get("tag") or ""),
+                updater_repo=str(base.get("updater_repo") or ""),
             )
         )
 
@@ -373,6 +388,9 @@ def load_config(
         description=str(defaults.get("description") or ""),
         rules=rules,
         platforms=built,
+        post_installs=_as_list(
+            raw.get("post_install", raw.get("post_installs")), "post_install"
+        ),
         readme_enabled=readme_enabled,
         readme_path=readme_path,
         readme_commit_message=readme_commit_message,
@@ -475,11 +493,134 @@ def fw_package_ini(
     return "\r\n".join(lines) + "\r\n"
 
 
-def release_version(tag: str) -> str:
-    """The version written into fw_package.ini.  Tags are used as published."""
+def _release_datestamp_label(raw: str) -> Optional[str]:
+    """Human date for a YYYYMMDD, YYMMDD or separated datestamp tag."""
 
-    tag = str(tag).strip()
-    return tag[1:] if len(tag) > 1 and tag[0] in ("v", "V") else tag
+    text = str(raw or "")
+    match = re.search(
+        r"(?<!\d)((?:19|20)\d{2})[-_./]?(0[1-9]|1[0-2])[-_./]?(0[1-9]|[12]\d|3[01])(?!\d)",
+        text,
+    )
+    year = month = day = None
+    if match:
+        year, month, day = (int(match.group(i)) for i in (1, 2, 3))
+    else:
+        short = re.search(
+            r"(?<!\d)(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?!\d)",
+            text,
+        )
+        if not short:
+            return None
+        yy = int(short.group(1))
+        year = 2000 + yy if yy < 70 else 1900 + yy
+        month, day = int(short.group(2)), int(short.group(3))
+    try:
+        dt = datetime(year, month, day)
+    except ValueError:
+        return None
+    return f"{dt.strftime('%B')} {dt.day} {dt.year}"
+
+
+def _tag_semver(tag: str) -> Optional[str]:
+    """Read the first semantic version embedded in a release tag."""
+
+    text = str(tag or "").strip()
+    if not text:
+        return None
+    compound = re.search(
+        r"(?:^|[^\d.])(?:v|v\.)?(\d+\.\d+(?:\.\d+)?)[-_](?:[a-zA-Z0-9]+[-_]|os[-_])?v?(\d+\.\d+(?:\.\d+)?)(?:[^\d.]|$)",
+        text,
+        re.IGNORECASE,
+    )
+    if compound:
+        return compound.group(1)
+    match = re.search(
+        r"(?:^|[^\d.])(?:v|v\.)?(\d+\.\d+(?:\.\d+)?(?:[a-zA-Z0-9]+)?)(?:[^\d.]|$)",
+        text,
+        re.IGNORECASE,
+    )
+    return match.group(1) if match else None
+
+
+def _detect_title_start_or_end_semver(title: str) -> Optional[str]:
+    """Detect a semantic version at the start or end of a release title."""
+
+    text = str(title or "").strip()
+    if not text:
+        return None
+
+    start = re.match(
+        r"^(?:release\s+|version\s+)?(?:\[|\()?(?:v|v\.)?(\d+(?:\.\d+)+)(?:\]|\))?(?:$|[\s:\-_|,])",
+        text,
+        re.IGNORECASE,
+    )
+    if start:
+        return start.group(1)
+
+    # Strip trailing designations such as (Beta), (240p) or [Preview].
+    candidate = text
+    for _ in range(4):
+        cleaned = re.sub(
+            r"[\s\-_]*[\(\[](?:beta\d*|alpha\d*|rc\d*|preview|240p|360p|adb|wifi|wi-fi|root|magisk)[\)\]]\s*$",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        if cleaned == candidate:
+            break
+        candidate = cleaned.strip()
+
+    end = re.search(
+        r"(?:^|[\s:\-_|,\(\[])(?:v|v\.)?(\d+(?:\.\d+)+)(?:\]|\))?\s*$",
+        candidate,
+        re.IGNORECASE,
+    )
+    return end.group(1) if end else None
+
+
+def _semver_from_release_title(title: str) -> Optional[str]:
+    """Read a title version when its tag has no usable version."""
+
+    text = str(title or "").strip()
+    if not text:
+        return None
+    detected = _detect_title_start_or_end_semver(text)
+    if detected:
+        return detected
+    after_prerelease = re.search(
+        r"\b(?:beta|alpha|rc)\s*v?(\d+(?:\.\d+)+)\b", text, re.IGNORECASE
+    )
+    if after_prerelease:
+        return after_prerelease.group(1)
+    versions = re.findall(r"(?<![\d.])(\d+\.\d+(?:\.\d+)+)(?![\d.])", text)
+    return versions[0] if len(versions) == 1 else None
+
+
+def release_version(tag: str, title: str = "") -> str:
+    """Version displayed by fw_package.ini, matching Updater CE.
+
+    A semantic version at the start or end of the original release title wins
+    over a build tag.  Otherwise use a semantic version embedded in the tag,
+    then a datestamp in the tag formatted as a readable date, then the tag as
+    published.  This is the same precedence Updater CE uses when it labels a
+    firmware release.
+    """
+
+    clean_tag = str(tag or "").strip()
+    clean_title = str(title or "").strip()
+    title_version = _detect_title_start_or_end_semver(clean_title)
+    if title_version:
+        return title_version
+    tag_version = _tag_semver(clean_tag)
+    if tag_version:
+        return tag_version
+    date_version = _release_datestamp_label(clean_tag)
+    if date_version:
+        return date_version
+    fallback = _semver_from_release_title(clean_title)
+    if fallback:
+        return fallback
+    return clean_tag[1:] if len(clean_tag) > 1 and clean_tag[0] in ("v", "V") else clean_tag
 
 
 def release_title(cfg: MirrorConfig, release: Mapping[str, Any]) -> str:
@@ -500,9 +641,11 @@ def config_fingerprint(cfg: MirrorConfig) -> str:
                 "asset": p.updater_asset,
                 "layout": p.layout,
                 "pinned": p.pinned_tag,
+                "updater_repo": p.updater_repo,
             }
             for p in cfg.platforms
         ],
+        "post_installs": cfg.post_installs,
         "firmware": {
             "include": cfg.firmware_include,
             "exclude": cfg.firmware_exclude,
@@ -547,6 +690,8 @@ def release_fingerprint(
                 "name": str(a.get("name") or ""),
                 "size": int(a.get("size") or 0),
                 "id": a.get("id"),
+                "digest": str(a.get("digest") or ""),
+                "updated_at": str(a.get("updated_at") or ""),
             }
             for a in release.get("assets", [])
         ),
@@ -558,6 +703,7 @@ def release_fingerprint(
         "source": {
             "repo": cfg.source_repo,
             "tag": str(release.get("tag_name") or ""),
+            "name": str(release.get("name") or ""),
             "assets": source_assets,
         },
         "updater": {
@@ -593,15 +739,54 @@ def parse_block(body: Optional[str]) -> Optional[Dict[str, Any]]:
     return data if isinstance(data, dict) else None
 
 
-def render_notes(release: Mapping[str, Any], block: Mapping[str, Any]) -> str:
-    """Original release notes followed by the invisible build record."""
+def render_notes(
+    release: Mapping[str, Any], block: Mapping[str, Any], header: str = ""
+) -> str:
+    """Generated buttons, original release notes and the invisible build record."""
 
     body = str(release.get("body") or "").strip()
     marker = (
         "<!-- portable-mirror:"
         f"{json.dumps(block, sort_keys=True, separators=(',', ':'))} -->"
     )
-    return (body + "\n\n" + marker).strip() + "\n"
+    sections = []
+    if header.strip():
+        sections.append(header.strip())
+    if body:
+        sections.append(body)
+    sections.append(marker)
+    return "\n\n".join(sections).strip() + "\n"
+
+
+def macos_dmg_readme(
+    dmg_name: str, firmware_folder: str, firmware_asset: str, software: str, version: str
+) -> str:
+    """README for the signed-DMG layout used by current macOS updaters."""
+
+    title = " ".join(part for part in (software, version) if part)
+    lines = [
+        "Innioasis Updater CE + Firmware Bundle",
+        "=====================================",
+        "",
+        f"Firmware: {title or software or 'Innioasis firmware'} ({firmware_asset})",
+        "",
+        "Quick start on macOS:",
+        f'1. Open "{dmg_name}" and drag "Innioasis Updater" to Applications.',
+        f'2. Extract this whole download and keep the "{firmware_folder}" folder',
+        "   next to the DMG. It contains the firmware images and fw_package.ini.",
+        "3. Launch Innioasis Updater, choose \"Install from file...\", select the",
+        f'   "{firmware_folder}" folder from this download (the original software',
+        "   download's Firmware folder), then click \"Install\".",
+        "4. If macOS prevents opening the app, open System Settings > Privacy & Security,",
+        '   scroll to Security and click "Open Anyway", then confirm.',
+        "5. If this package includes an \"After Install Steps\" file, open it",
+        "   after the install finishes.",
+        "",
+        "The firmware folder is the original software download's payload,",
+        "repackaged beside the signed upstream DMG. The DMG is copied unchanged.",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def macos_readme(app_name: str, firmware_asset: str, software: str, version: str) -> str:
@@ -615,7 +800,8 @@ def macos_readme(app_name: str, firmware_asset: str, software: str, version: str
         "Quick start on macOS:",
         f'1. Keep "{app_name}" and the "Firmware" folder together; you can move',
         "   the whole folder to Applications.",
-        "2. Launch Install Firmware and follow the on-screen prompt.",
+        "2. Launch Install Firmware, choose \"Install from file...\", select the",
+        "   \"Firmware\" folder, then click \"Install\".",
         "3. If macOS prevents opening the app, open System Settings > Privacy & Security,",
         '   scroll to Security and click "Open Anyway", then confirm.',
         "",

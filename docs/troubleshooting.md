@@ -42,7 +42,10 @@ file, for example:
 The configured `updater_asset` does not exist in any Updater CE release.
 
 - Check the exact asset name on the latest
-  [updater-ce-neo release](https://github.com/y1-community/updater-ce-neo/releases).
+  [updater-ce-neo release](https://github.com/y1-community/updater-ce-neo/releases)
+  for Windows/Linux, or the latest
+  [innioasis-updater release](https://github.com/y1-community/innioasis-updater/releases)
+  for the macOS DMG.
 - If the platform is not supported yet, mark it `"optional": true` (the arm64
   entries already are) or remove it from the `platforms` object.
 - If you pinned `platforms.<key>.tag`, confirm that release has the asset.
@@ -107,6 +110,15 @@ GitHub disables schedules after 60 days without repository activity. Open the
 Actions tab and run the workflow once, or push any commit. Release creation by
 the workflow itself usually keeps the repository active.
 
+## Release buttons are missing
+
+The buttons are SVGs under `.mirror-assets/` on the mirror's `main` branch, not
+release assets. GitHub serves release assets as `application/octet-stream`,
+which browsers will not render inside an image tag. Rerun the mirror sync; it
+publishes all six button files before updating release notes. If the branch was
+protected against Contents API commits, allow the workflow token or move
+`.mirror-assets/` to an unprotected branch and update the config branch.
+
 ## index.json is stale or missing
 
 The workflow commits `index.json` after every run. If the commit step failed
@@ -135,12 +147,16 @@ the Actions bot or disable the protection for `index.json`.
 - `stats.txt` counts download events, not unique people. Use it for trends and
   combined activity, not as an exact install count.
 
-## macOS app is damaged after extraction
+## macOS package or app looks wrong after extraction
 
-That happens when a repackager loses symlinks. This tool copies ZIP entries
-without extracting them and preserves `external_attr`, so the `.app` keeps its
-links. If you modify the packager, keep that property and run
-`tests/test_packager.py::test_macos_layout_keeps_symlinks`.
+The macOS package is a signed DMG plus firmware, not an extracted `.app`. Open
+`1. Install App and Firmware.dmg`, drag `Innioasis Updater` to Applications, and
+choose **Install from file...** in the app. The bundled `README.txt` includes
+the same steps and the **System Settings > Privacy & Security > Open Anyway**
+path. If another platform package is damaged after extraction, check that the
+repackager preserved symlinks: the tool copies ZIP entries without extracting
+them and preserves `external_attr`. If you modify the packager, keep that
+property and run `tests/test_packager.py::test_macos_layout_keeps_symlinks`.
 
 ## Website still downloads the original zip
 

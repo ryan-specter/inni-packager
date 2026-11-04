@@ -24,8 +24,8 @@ MANAGED = {
     "mirror-report.json",
     "mirror.config.json",
 }
-SKIP_TARGET_DIRS = {".git", ".packager", ".source"}
-SKIP_SOURCE_DIRS = {".git", ".github"}
+SKIP_TARGET_DIRS = {".git", ".packager", ".source", ".mirror-assets"}
+SKIP_SOURCE_DIRS = {".git", ".github", ".mirror-assets"}
 README_PREFIX = "readme."
 
 

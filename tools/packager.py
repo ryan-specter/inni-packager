@@ -11,6 +11,8 @@ lists and an optional updater image from the firmware zip:
 * ``beside_app`` layout (macOS): the portable app is renamed
   ``Install Firmware.app`` and the firmware plus ``fw_package.ini`` go into a
   neighbouring ``Firmware`` folder.
+* ``beside_dmg`` layout (macOS): the signed DMG is copied unchanged to the zip
+  root and the firmware plus ``fw_package.ini`` go into lowercase ``firmware/``.
 
 Surrounding files from the firmware zip, such as a bundled SP Flash Tool tree,
 are stripped; only what the scatter declares is needed.
@@ -21,6 +23,7 @@ memory; large partition images stream through a 1 MiB window.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import plistlib
 import posixpath
@@ -32,18 +35,31 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from mirrorspec import Platform, drops_preserve_txt, macos_readme
+from mirrorspec import (
+    Platform,
+    drops_preserve_txt,
+    macos_dmg_readme,
+    macos_readme,
+)
 
 BUFFER_SIZE = 1024 * 1024
 COMPRESS_LEVEL = 9
 DRIVE_RE = re.compile(r"^[A-Za-z]:")
 MAC_APP_NAME = "Install Firmware.app"
 MAC_FIRMWARE_DIR = "Firmware"
+MAC_DMG_NAME = "1. Install App and Firmware.dmg"
+MAC_DMG_FIRMWARE_DIR = "firmware"
+# macOS may add an AppleDouble metadata tree to zips it creates.  Treat both
+# the normal spelling and the single-underscore variant as metadata so neither
+# can leak into a generated package.
+MACOS_METADATA_DIRS = frozenset({"__macosx", "_macosx"})
 PACKAGE_IMAGE_NAMES = ("updater.png", "updater.jpg", "updater.jpeg")
+
+DA_NAMES = ("MTK_AllInOne_DA.bin", "MTK_AllInOneDA.bin")
 
 HISTORY_INI = (
     "[LastDAFilePath]\r\n"
-    "lastDir=MTK_AllInOne_DA.bin\r\n"
+    "lastDir={da}\r\n"
     "\r\n"
     "[RecentOpenFile]\r\n"
     "lastDir=\r\n"
@@ -63,6 +79,7 @@ class FirmwarePackage:
     scatters: List[str]
     chosen_scatter: Optional[str]
     entry_count: int
+    da_file: Optional[str] = None
 
     def describe(self) -> str:
         return (
@@ -91,6 +108,8 @@ def _safe_name(raw: str) -> Optional[str]:
         return None
     parts = [p for p in name.split("/") if p not in ("", ".")]
     if any(p == ".." for p in parts):
+        return None
+    if any(p.lower() in MACOS_METADATA_DIRS for p in parts):
         return None
     if not parts:
         return None
@@ -169,8 +188,9 @@ def inspect_firmware(path: Path, source_repo: str = "") -> FirmwarePackage:
     scatters = [
         n for n in scatters if "preserve" not in posixpath.basename(n).lower()
     ]
+    da_file = _pick_da_file(clean_names)
     if not scatters:
-        return FirmwarePackage(path, "", [], None, len(clean_names))
+        return FirmwarePackage(path, "", [], None, len(clean_names), da_file)
 
     groups: Dict[str, List[str]] = {}
     for name in scatters:
@@ -196,7 +216,32 @@ def inspect_firmware(path: Path, source_repo: str = "") -> FirmwarePackage:
     elif len(basenames) == 1:
         chosen = basenames[0]
 
-    return FirmwarePackage(path, scatter_dir, basenames, chosen, len(clean_names))
+    return FirmwarePackage(
+        path, scatter_dir, basenames, chosen, len(clean_names), da_file
+    )
+
+
+def _pick_da_file(names: List[str]) -> Optional[str]:
+    """Find the primary MediaTek download agent in a firmware zip."""
+
+    candidates = [
+        name
+        for name in names
+        if not name.endswith("/")
+        and name.lower().endswith(".bin")
+        and "allinone" in posixpath.basename(name).lower()
+    ]
+    if not candidates:
+        return None
+    for preferred in DA_NAMES:
+        matches = [
+            name
+            for name in candidates
+            if posixpath.basename(name).lower() == preferred.lower()
+        ]
+        if matches:
+            return sorted(matches, key=lambda name: name.count("/"))[0]
+    return sorted(candidates, key=lambda name: (name.count("/"), name))[0]
 
 
 def _tool_layout(tool_zip: zipfile.ZipFile) -> Tuple[str, Optional[str]]:
@@ -212,6 +257,50 @@ def _tool_layout(tool_zip: zipfile.ZipFile) -> Tuple[str, Optional[str]]:
         if root.lower().endswith(".app") and app_name is None:
             app_name = root
     return ((sp_name + "/") if sp_name else "SP_Flash_Tool/"), app_name
+
+
+def _tool_da_name(tool_zip: zipfile.ZipFile, sp_prefix: str) -> str:
+    """Return the DA filename already shipped inside the portable tool."""
+
+    names = [
+        n
+        for n in (_safe_name(info.filename) for info in tool_zip.infolist())
+        if n and not n.endswith("/") and n.startswith(sp_prefix)
+    ]
+    for preferred in DA_NAMES:
+        matches = [n for n in names if n.lower() == (sp_prefix + preferred).lower()]
+        if matches:
+            return posixpath.basename(matches[0])
+
+    # Some Updater CE builds may rename the DA.  Their own history.ini names
+    # the file they consider the default, so trust it when it is present.
+    try:
+        history = tool_zip.read(sp_prefix + "history.ini").decode(
+            "utf-8", "ignore"
+        )
+    except KeyError:
+        history = ""
+    for line in history.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip().lower() != "lastdir":
+            continue
+        name = posixpath.basename(value.strip().strip('"\'').replace("\\", "/"))
+        if name and any(
+            n.lower() == (sp_prefix + name).lower() for n in names
+        ):
+            return name
+
+    candidates = [
+        posixpath.basename(n)
+        for n in names
+        if posixpath.basename(n).lower().endswith(".bin")
+        and "allinone" in posixpath.basename(n).lower()
+    ]
+    if candidates:
+        return sorted(set(candidates), key=str.lower)[0]
+    # This is only a fallback for a malformed/unusual portable app.  The DA
+    # path in history.ini must remain a bare filename, never an absolute path.
+    return DA_NAMES[0]
 
 
 def _rename_bundle(name: str, old_root: str, new_root: str) -> str:
@@ -334,6 +423,14 @@ def _firmware_plan(
             if basename.lower() in ("history.ini", "fw_package.ini"):
                 # Replaced by the metadata this tool writes.
                 continue
+            if (
+                not is_dir
+                and firmware.da_file
+                and name.lower() == firmware.da_file.lower()
+            ):
+                # The primary DA is copied to the SP Flash Tool root below.
+                skipped.append(info.filename)
+                continue
             if required is not None:
                 rel_lower = rel.lower()
                 if is_dir:
@@ -379,6 +476,8 @@ def build_portable_package(
     source_asset: str,
     log: Optional[Callable[[str], None]] = None,
     source_repo: str = "",
+    post_install_name: str = "",
+    post_install_data: bytes = b"",
 ) -> BuildResult:
     """Write one portable package and return its metadata."""
 
@@ -388,8 +487,21 @@ def build_portable_package(
 
     drop_preserve_txt = drops_preserve_txt(source_repo)
     plan, skipped = _firmware_plan(firmware, drop_preserve_txt=drop_preserve_txt)
-    with zipfile.ZipFile(tool_zip_path) as tool_zip:
-        sp_prefix, app_name = _tool_layout(tool_zip)
+    dmg_layout = platform.layout == "beside_dmg"
+    if dmg_layout and tool_zip_path.suffix.lower() != ".dmg":
+        raise PackagingError(
+            f"{tool_zip_path.name} is not a DMG; cannot use beside_dmg layout"
+        )
+    tool_context = (
+        contextlib.nullcontext(None)
+        if dmg_layout
+        else zipfile.ZipFile(tool_zip_path)
+    )
+    with tool_context as tool_zip:
+        if dmg_layout:
+            sp_prefix, app_name = "", None
+        else:
+            sp_prefix, app_name = _tool_layout(tool_zip)
         mac_layout = platform.layout == "beside_app"
         if mac_layout and not app_name:
             raise PackagingError(
@@ -403,6 +515,8 @@ def build_portable_package(
                 dest = sp_prefix + rel
             elif mac_layout:
                 dest = MAC_FIRMWARE_DIR + "/" + rel
+            elif dmg_layout:
+                dest = MAC_DMG_FIRMWARE_DIR + "/" + rel
             else:
                 dest = rel
             key = dest.lower()
@@ -413,6 +527,16 @@ def build_portable_package(
 
         extra_files: Dict[str, bytes] = {}
         if platform.layout == "sp_flash_tool":
+            da_name = _tool_da_name(tool_zip, sp_prefix)
+            if firmware.da_file:
+                # A firmware-specific DA is more authoritative than the generic
+                # one bundled by Updater CE.  Put it at the tool root and keep
+                # only its bare filename in history.ini.
+                da_name = posixpath.basename(firmware.da_file)
+                da_dest = sp_prefix + da_name
+                if da_dest.lower() not in seen:
+                    firmware_dests.append((firmware.da_file, da_dest, False))
+                    seen.add(da_dest.lower())
             extra_files["fw_package.ini"] = ini_text.encode("utf-8")
             extra_files[sp_prefix + "fw_package.ini"] = ini_text.encode("utf-8")
             scatter_name = firmware.chosen_scatter or (
@@ -424,7 +548,18 @@ def build_portable_package(
                     "scatter.txt",
                 )
             extra_files[sp_prefix + "history.ini"] = HISTORY_INI.format(
-                scatter=scatter_name
+                scatter=scatter_name, da=da_name
+            ).encode("utf-8")
+        elif dmg_layout:
+            extra_files[MAC_DMG_FIRMWARE_DIR + "/fw_package.ini"] = ini_text.encode(
+                "utf-8"
+            )
+            extra_files["README.txt"] = macos_dmg_readme(
+                MAC_DMG_NAME,
+                MAC_DMG_FIRMWARE_DIR,
+                source_asset,
+                software_name,
+                version,
             ).encode("utf-8")
         else:
             extra_files[MAC_FIRMWARE_DIR + "/fw_package.ini"] = ini_text.encode(
@@ -448,6 +583,18 @@ def build_portable_package(
                     f"{MAC_APP_NAME}/Contents/Info.plist"
                 ] = plistlib.dumps(plist)
 
+        if post_install_name and post_install_data:
+            clean_post = _safe_name(post_install_name)
+            if (
+                not clean_post
+                or clean_post.endswith("/")
+                or "/" in clean_post
+            ):
+                raise PackagingError(
+                    f"unsafe post-install filename: {post_install_name!r}"
+                )
+            extra_files[clean_post] = post_install_data
+
         overrides = {name.lower() for name in extra_files}
         overrides.update(dest.lower() for _, dest, _ in firmware_dests)
 
@@ -459,30 +606,38 @@ def build_portable_package(
             compresslevel=COMPRESS_LEVEL,
             allowZip64=True,
         ) as dst:
-            for info in tool_zip.infolist():
-                name = _safe_name(info.filename)
-                if name is None:
-                    skipped.append(info.filename)
-                    continue
-                if mac_layout:
-                    if name == "__MACOSX" or name.startswith("__MACOSX/"):
-                        continue
-                    if app_name:
-                        name = _rename_bundle(name, app_name, MAC_APP_NAME)
-                    if name.startswith(
-                        f"{MAC_APP_NAME}/Contents/_CodeSignature"
-                    ):
-                        continue
-                if name.lower() in overrides:
-                    # The firmware or our metadata replaces this file.
-                    continue
-                compress = (
-                    zipfile.ZIP_STORED
-                    if (name.endswith("/") or _is_symlink(info))
-                    else zipfile.ZIP_DEFLATED
+            if dmg_layout:
+                # Keep the signed DMG byte-for-byte identical; recompressing it
+                # would waste time and make the copy differ from upstream.
+                dst.write(
+                    tool_zip_path,
+                    arcname=MAC_DMG_NAME,
+                    compress_type=zipfile.ZIP_STORED,
                 )
-                _copy_info(dst, tool_zip, info, name, compress)
                 entries += 1
+            else:
+                for info in tool_zip.infolist():
+                    name = _safe_name(info.filename)
+                    if name is None:
+                        skipped.append(info.filename)
+                        continue
+                    if mac_layout:
+                        if app_name:
+                            name = _rename_bundle(name, app_name, MAC_APP_NAME)
+                        if name.startswith(
+                            f"{MAC_APP_NAME}/Contents/_CodeSignature"
+                        ):
+                            continue
+                    if name.lower() in overrides:
+                        # The firmware or our metadata replaces this file.
+                        continue
+                    compress = (
+                        zipfile.ZIP_STORED
+                        if (name.endswith("/") or _is_symlink(info))
+                        else zipfile.ZIP_DEFLATED
+                    )
+                    _copy_info(dst, tool_zip, info, name, compress)
+                    entries += 1
 
             with zipfile.ZipFile(firmware.path) as firmware_zip:
                 for src_name, dest, _is_dir in firmware_dests:

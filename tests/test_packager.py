@@ -3,6 +3,7 @@ import plistlib
 import sys
 import unittest
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,6 +53,8 @@ class PackagerTests(unittest.TestCase):
                 ("images/", b"", DIR_MODE),
                 ("images/system.img", payload, FILE_MODE),
                 ("history.ini", b"[stale]\n", FILE_MODE),
+                ("__MACOSX/._boot.img", b"junk", FILE_MODE),
+                ("_MACOSX/._system.img", b"junk", FILE_MODE),
             ],
         )
 
@@ -61,9 +64,12 @@ class PackagerTests(unittest.TestCase):
             [
                 ("SP_Flash_Tool/", b"", DIR_MODE),
                 ("SP_Flash_Tool/flash_tool.exe", b"tool", FILE_MODE),
+                ("SP_Flash_Tool/MTK_AllInOne_DA.bin", b"da", FILE_MODE),
                 ("SP_Flash_Tool/history.ini", b"[old]\n", FILE_MODE),
                 ("InnioasisUpdater", b"python", FILE_MODE),
                 ("_internal/base_library.zip", b"zip", FILE_MODE),
+                ("__MACOSX/._InnioasisUpdater", b"junk", FILE_MODE),
+                ("_MACOSX/._flash_tool.exe", b"junk", FILE_MODE),
             ],
         )
 
@@ -81,7 +87,14 @@ class PackagerTests(unittest.TestCase):
                 ("Innioasis Updater.app/Contents/MacOS/Innioasis Updater", b"binary", FILE_MODE),
                 ("Innioasis Updater.app/Contents/Frameworks/QtCore", b"QtCore.framework/Versions/A/QtCore", LINK_MODE),
                 ("__MACOSX/._Innioasis Updater.app", b"junk", FILE_MODE),
+                ("_MACOSX/._Innioasis Updater.app", b"junk", FILE_MODE),
             ],
+        )
+
+        self.mac_app_platform = replace(
+            self.cfg.platform("macos"),
+            layout="beside_app",
+            updater_asset="Innioasis.Updater.for.Mac.zip",
         )
 
         self.ini = mirrorspec.fw_package_ini(
@@ -92,6 +105,12 @@ class PackagerTests(unittest.TestCase):
         import shutil
 
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def assert_no_macos_metadata(self, names):
+        metadata = {"__macosx", "_macosx"}
+        for name in names:
+            for part in name.split("/"):
+                self.assertNotIn(part.lower(), metadata, name)
 
     def test_inspect_picks_non_preserve_scatter(self):
         package = inspect_firmware(self.firmware)
@@ -126,7 +145,7 @@ class PackagerTests(unittest.TestCase):
         build_portable_package(
             self.mac_tool,
             inspect_firmware(self.firmware, source_repo="schulzcode/y2linux"),
-            self.cfg.platform("macos"),
+            self.mac_app_platform,
             mac_out,
             self.ini,
             "Original Software",
@@ -224,7 +243,7 @@ class PackagerTests(unittest.TestCase):
         build_portable_package(
             self.mac_tool,
             package,
-            self.cfg.platform("macos"),
+            self.mac_app_platform,
             mac_out,
             self.ini,
             "Original Software",
@@ -265,12 +284,67 @@ class PackagerTests(unittest.TestCase):
         self.assertIn("SP_Flash_Tool/fw_package.ini", names)
         self.assertIn("fw_package.ini", names)
         self.assertIn("SP_Flash_Tool/flash_tool.exe", names)
+        self.assertIn("SP_Flash_Tool/MTK_AllInOne_DA.bin", names)
         self.assertEqual(names.count("SP_Flash_Tool/history.ini"), 1)
+        self.assert_no_macos_metadata(names)
 
         with zipfile.ZipFile(out) as archive:
             history = archive.read("SP_Flash_Tool/history.ini").decode("utf-8")
             self.assertIn("scatterHistory=MT6572_Android_scatter.txt", history)
+            self.assertIn("lastDir=MTK_AllInOne_DA.bin", history)
             self.assertNotIn("[old]", history)
+            self.assertNotIn("C:\\", history)
+            self.assertNotIn("/", history.replace("[LastDAFilePath]", "").replace("[RecentOpenFile]", "").replace("@Invalid()", ""))
+            self.assertNotIn("\\", history.replace("[LastDAFilePath]", "").replace("[RecentOpenFile]", "").replace("@Invalid()", ""))
+
+    def test_macos_metadata_is_not_packed_for_windows_or_linux(self):
+        for key in ("windows", "linux"):
+            out = self.tmp / f"metadata-{key}.zip"
+            build_portable_package(
+                self.windows_tool,
+                inspect_firmware(self.firmware),
+                self.cfg.platform(key),
+                out,
+                self.ini,
+                "Original Software",
+                "3.1.2",
+                "rom.zip",
+            )
+            self.assert_no_macos_metadata(names_of(out))
+
+    def test_firmware_da_is_copied_to_the_tool_root_without_a_path(self):
+        source = self.tmp / "with-da.zip"
+        write_zip(
+            source,
+            [
+                ("MT6572_Android_scatter.txt", b"partition_index: SYS0\n", FILE_MODE),
+                ("boot.img", b"boot", FILE_MODE),
+                ("pkg/MTK_AllInOneDA.bin", b"firmware-da", FILE_MODE),
+            ],
+        )
+        package = inspect_firmware(source)
+        self.assertEqual(package.da_file, "pkg/MTK_AllInOneDA.bin")
+        out = self.tmp / "with-da-windows.zip"
+        result = build_portable_package(
+            self.windows_tool,
+            package,
+            self.cfg.platform("windows"),
+            out,
+            self.ini,
+            "Original Software",
+            "3.1.2",
+            "with-da.zip",
+        )
+        names = names_of(out)
+        self.assertIn("SP_Flash_Tool/MTK_AllInOneDA.bin", names)
+        self.assertNotIn("SP_Flash_Tool/pkg/MTK_AllInOneDA.bin", names)
+        self.assertNotIn("SP_Flash_Tool/pkg/", names)
+        with zipfile.ZipFile(out) as archive:
+            history = archive.read("SP_Flash_Tool/history.ini").decode("utf-8")
+            self.assertIn("lastDir=MTK_AllInOneDA.bin", history)
+            self.assertIn(
+                archive.read("SP_Flash_Tool/MTK_AllInOneDA.bin"), b"firmware-da"
+            )
             ini = archive.read("SP_Flash_Tool/fw_package.ini").decode("utf-8")
             self.assertIn("software_name = Original Software", ini)
             self.assertEqual(archive.getinfo("SP_Flash_Tool/boot.img").compress_type, zipfile.ZIP_DEFLATED)
@@ -283,7 +357,7 @@ class PackagerTests(unittest.TestCase):
         result = build_portable_package(
             self.mac_tool,
             inspect_firmware(self.firmware),
-            self.cfg.platform("macos"),
+            self.mac_app_platform,
             out,
             self.ini,
             "Original Software",
@@ -300,7 +374,7 @@ class PackagerTests(unittest.TestCase):
         self.assertNotIn("boot.img", names)
         self.assertNotIn("fw_package.ini", names)
         self.assertFalse(any(n.startswith("Innioasis Updater.app") for n in names))
-        self.assertFalse(any(n.startswith("__MACOSX") for n in names))
+        self.assert_no_macos_metadata(names)
         self.assertFalse(any("_CodeSignature" in n for n in names))
         self.assertFalse(any(n.startswith("SP_Flash_Tool/") for n in names))
 
@@ -319,6 +393,54 @@ class PackagerTests(unittest.TestCase):
             readme = archive.read("README.txt").decode("utf-8")
             self.assertIn("Install Firmware.app", readme)
             self.assertIn("Firmware", readme)
+        self.assertGreater(result.size, 0)
+
+    def test_macos_dmg_layout_copies_dmg_and_lowercase_firmware(self):
+        dmg = self.tmp / "Innioasis.Updater.for.Mac.dmg"
+        dmg_bytes = b"signed disk image bytes"
+        dmg.write_bytes(dmg_bytes)
+        platform = replace(
+            self.cfg.platform("macos"),
+            layout="beside_dmg",
+            updater_asset="Innioasis.Updater.for.Mac.dmg",
+            updater_repo="y1-community/innioasis-updater",
+        )
+        out = self.tmp / "rom-macos-dmg.zip"
+        post = b"[InternetShortcut]\r\nURL=https://example.test/steps\r\n"
+        result = build_portable_package(
+            dmg,
+            inspect_firmware(self.firmware, source_repo="schulzcode/y2linux"),
+            platform,
+            out,
+            self.ini,
+            "Original Software",
+            "3.1.2",
+            "rom.zip",
+            source_repo="schulzcode/y2linux",
+            post_install_name="3. After Install Steps.url",
+            post_install_data=post,
+        )
+        names = names_of(out)
+        self.assertIn("1. Install App and Firmware.dmg", names)
+        self.assertIn("firmware/boot.img", names)
+        self.assertIn("firmware/MT6572_Android_scatter.txt", names)
+        self.assertIn("firmware/images/system.img", names)
+        self.assertIn("firmware/fw_package.ini", names)
+        self.assertIn("3. After Install Steps.url", names)
+        self.assertIn("README.txt", names)
+        self.assertFalse(any(n.startswith("Install Firmware.app") for n in names))
+        self.assertFalse(any(n.startswith("Firmware/") for n in names))
+        self.assertFalse(any(n.startswith("SP_Flash_Tool/") for n in names))
+        self.assert_no_macos_metadata(names)
+        with zipfile.ZipFile(out) as archive:
+            info = archive.getinfo("1. Install App and Firmware.dmg")
+            self.assertEqual(info.compress_type, zipfile.ZIP_STORED)
+            self.assertEqual(archive.read(info), dmg_bytes)
+            self.assertEqual(archive.read("3. After Install Steps.url"), post)
+            readme = archive.read("README.txt").decode("utf-8")
+            self.assertIn("Open Anyway", readme)
+            self.assertIn("Install from file...", readme)
+            self.assertIn("firmware", readme)
         self.assertGreater(result.size, 0)
 
     def test_traversal_entries_are_skipped(self):

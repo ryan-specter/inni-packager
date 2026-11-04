@@ -50,9 +50,10 @@ Every mirror `index.json` contains:
 ```
 
 Use `source_title` and `source_notes`. Do not parse the mirror release body: it
-ends with an invisible `portable-mirror` block after the original notes. Older
-index entries created before this field existed may lack it; fetch the source
-release from `source_url` until the mirror backfill refreshes them.
+starts with generated image buttons and ends with an invisible
+`portable-mirror` block around the original notes. Older index entries created
+before this field existed may lack it; fetch the source release from
+`source_url` until the mirror backfill refreshes them.
 
 The site also keeps its existing `firmware-catalog.js` / manifest entries
 (`repo`, `packageName`, `post_install`, `post_install2`, model, version). The

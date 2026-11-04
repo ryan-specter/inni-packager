@@ -28,11 +28,18 @@ class SourceSyncTests(unittest.TestCase):
             (target / ".github" / "workflows" / "mirror.yml").write_text("name: mirror\n", encoding="utf-8")
             (target / "stale.txt").write_text("old\n", encoding="utf-8")
             (target / "README.md").write_text("# Old\n", encoding="utf-8")
+            (target / ".mirror-assets").mkdir()
+            (target / ".mirror-assets" / "release-button-updater.svg").write_text(
+                "<svg/>\n", encoding="utf-8"
+            )
 
             result = source_sync.sync_source(source, target, "a/b")
 
             self.assertEqual(result["copied"], 2)
             self.assertGreaterEqual(result["removed"], 1)
+            self.assertTrue(
+                (target / ".mirror-assets" / "release-button-updater.svg").exists()
+            )
             self.assertEqual((target / "README.md").read_text(encoding="utf-8"), "# Source\n")
             self.assertEqual((target / "pkg" / "app.py").read_text(encoding="utf-8"), "print('ok')\n")
             self.assertFalse((target / ".github" / "workflows" / "build.yml").exists())

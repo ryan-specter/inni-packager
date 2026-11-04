@@ -4,6 +4,7 @@ __pycache__/
 
 # Local build and run output
 dist/
+.build/
 .work/
 mirror-report.json
 onboarding-report.json
@@ -11,3 +12,6 @@ onboarding-plan.json
 
 # Freebuff workspace metadata
 .freebuff/
+
+# Chat exports used while resuming work
+Retrace steps and ensure work completed/

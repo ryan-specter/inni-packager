@@ -119,18 +119,20 @@ Open any mirrored release and check:
 
 - the tag matches the source
 - the title starts with `Portable Flashing Package: `
-- the original notes are intact; no visible footer was added
+- the original notes are intact below the generated button header
+- the buttons render and the Updater CE button opens the install guide
 - `README.md` matches the source repository's README (or the configured path)
-- the assets include `rom-windows.zip`, `rom-linux.zip` and `rom-macos.zip`
+- the assets include `rom-windows.zip`, `rom-linux.zip` and `rom-macos.zip`;
+  the Updater CE SVGs live under `.mirror-assets/` on the branch
 - `stats.txt` is present and shows source, mirror, per-platform and combined
   download figures
 - `index.json` at the repository root lists the same assets with sizes and
   SHA-256 hashes, plus `stats_url`; it also carries `source_title`,
   `source_notes` and a top-level `source_readme` URL
 
-`rom-macos.zip` should contain the `.app` bundle at its root and the firmware
-files beside it. `rom-windows.zip` should contain `SP_Flash_Tool/` with the
-scatter, images and `fw_package.ini`.
+`rom-macos.zip` should contain `1. Install App and Firmware.dmg`, a lowercase
+`firmware/` folder, `README.txt` and the post-install shortcut. `rom-windows.zip`
+should contain `SP_Flash_Tool/` with the scatter, images and `fw_package.ini`.
 
 ## Config reference
 
@@ -139,7 +141,7 @@ scatter, images and `fw_package.ini`.
 | `source_repo` | – | Repository to mirror. Required. |
 | `mirror_repo` | `GITHUB_REPOSITORY` | Repository that receives releases. |
 | `branch` | `main` | Branch where `index.json` is committed. |
-| `updater_repo` | `y1-community/updater-ce-neo` | Source of the portable app zips. |
+| `updater_repo` | `y1-community/updater-ce-neo` | Source of the Windows/Linux portable app zips. |
 | `title_prefix` | `Portable Flashing Package: ` | Applied to release titles. |
 | `copy_original_assets` | `true` | Copy every original asset, including the source zips. |
 | `source_readme.enabled` | `true` | Copy the source repository README into the mirror. |
@@ -154,8 +156,9 @@ scatter, images and `fw_package.ini`.
 | `releases.tags` | `[]` | Optional glob allow-list. |
 | `releases.exclude_tags` | `[]` | Optional glob deny-list. |
 | `platforms.<key>.updater_asset` | per platform | Exact asset name in `updater_repo`. |
+| `platforms.<key>.updater_repo` | top-level `updater_repo` | Per-platform override; macOS uses `y1-community/innioasis-updater`. |
 | `platforms.<key>.suffix` | per platform | Appended to the firmware asset base name. |
-| `platforms.<key>.layout` | `sp_flash_tool` | Or `beside_app` for macOS. |
+| `platforms.<key>.layout` | `sp_flash_tool` | `beside_dmg` for macOS. |
 | `platforms.<key>.optional` | arm64 only | Skip silently until upstream publishes it. |
 | `platforms.<key>.tag` | – | Pin a specific Updater CE release. |
 | `platforms.<key>.enabled` | `true` | Set `false` to disable. |
@@ -190,7 +193,8 @@ Windows does not roll Linux or macOS backwards.
 - After the source repository publishes a release: the schedule picks it up
   within six hours, or run the workflow manually.
 - After Updater CE publishes a new portable build: the fingerprint includes the
-  updater asset, so the next run rebuilds every release with the new app.
+  updater asset, so the next scheduled run (also every six hours by default)
+  rebuilds every release with the new app.
 - After changing `mirror.config.json`: the config fingerprint changes and
   affected releases are rebuilt.
 

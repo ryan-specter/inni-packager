@@ -37,6 +37,7 @@ class ReviewReleaseTests(unittest.TestCase):
             "fingerprint": pm.release_fingerprint(self.cfg, release, self.updater),
             "failures": [],
             "assets": [{"name": name, "size": 10} for name in names],
+            "button_assets": [{"name": "release-button-updater.svg", "size": 10}],
         }
 
     def review(self, release, existing, block):
@@ -54,6 +55,7 @@ class ReviewReleaseTests(unittest.TestCase):
             "assets": [
                 asset("rom.zip", 5, "sha256:aaa"),
                 asset("rom-windows.zip", 10, "sha256:bbb"),
+                asset("release-button-updater.svg", 10, "sha256:ccc"),
             ]
         }
         item = self.review(
@@ -69,6 +71,7 @@ class ReviewReleaseTests(unittest.TestCase):
             "assets": [
                 asset("rom.zip", 5, "sha256:old"),
                 asset("rom-windows.zip", 10, "sha256:bbb"),
+                asset("release-button-updater.svg", 10, "sha256:ccc"),
             ]
         }
         item = self.review(
@@ -85,6 +88,7 @@ class ReviewReleaseTests(unittest.TestCase):
             "assets": [
                 asset("rom.zip", 5, "sha256:aaa"),
                 asset("rom-windows.zip", 10, "sha256:bbb"),
+                asset("release-button-updater.svg", 10, "sha256:ccc"),
             ]
         }
         item = self.review(
@@ -99,6 +103,7 @@ class ReviewReleaseTests(unittest.TestCase):
             "assets": [
                 asset("rom.zip", 5, "sha256:aaa"),
                 asset("rom-windows.zip", 10, "sha256:bbb"),
+                asset("release-button-updater.svg", 10, "sha256:ccc"),
             ]
         }
         block = self.block_for(release, ["rom-windows.zip"])
@@ -108,7 +113,12 @@ class ReviewReleaseTests(unittest.TestCase):
 
     def test_missing_package_needs_a_build(self):
         release = source_release([asset("rom.zip", 5, "sha256:aaa")])
-        existing = {"assets": [asset("rom.zip", 5, "sha256:aaa")]}
+        existing = {
+            "assets": [
+                asset("rom.zip", 5, "sha256:aaa"),
+                asset("release-button-updater.svg", 10, "sha256:ccc"),
+            ]
+        }
         item = self.review(
             release, existing, self.block_for(release, ["rom-windows.zip"])
         )

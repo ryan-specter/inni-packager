@@ -111,6 +111,21 @@ def parse_manifest(text: str) -> List[ManifestPackage]:
     return packages
 
 
+def post_installs_for_source(
+    source_repo: str, location: str = MANIFEST_URL
+) -> List[str]:
+    """Return the manifest's post-install links for one source repository."""
+
+    wanted = source_repo.strip().lower()
+    seen: List[str] = []
+    for package in parse_manifest(fetch_manifest(location)):
+        if package.repo.lower() != wanted or not package.post_install:
+            continue
+        if package.post_install not in seen:
+            seen.append(package.post_install)
+    return seen
+
+
 def _mirror_name(source_repo: str, suffix: str, used: set) -> str:
     owner, name = source_repo.split("/", 1)
     slug = _SAFE_NAME.sub("-", name.lower()).strip("-._") or "firmware"
@@ -202,6 +217,7 @@ def product_config(
         "mirror_repo": product.mirror_repo,
         "branch": branch,
         "updater_repo": updater_repo,
+        "post_install": product.post_installs,
         "title_prefix": title_prefix,
         "copy_original_assets": True,
         "source_readme": {

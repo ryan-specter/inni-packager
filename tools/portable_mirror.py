@@ -30,7 +30,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from urllib.parse import quote
 
+import postinstall
+import release_notes
 from gh import ApiError, GitHub, GitHubError
+from manifest import post_installs_for_source
 from mirrorspec import (
     BUILDER_VERSION,
     ConfigError,
@@ -113,32 +116,39 @@ def find_updater_asset(
 def resolve_updater_assets(
     cfg: MirrorConfig, gh: GitHub, log: Log
 ) -> Dict[str, Dict[str, Any]]:
-    releases = gh.list_releases(cfg.updater_repo)
+    releases_by_repo: Dict[str, Sequence[Mapping[str, Any]]] = {}
     chosen: Dict[str, Dict[str, Any]] = {}
     for platform in cfg.platforms:
-        found = find_updater_asset(releases, platform)
+        repo = platform.updater_repo or cfg.updater_repo
+        if repo not in releases_by_repo:
+            releases_by_repo[repo] = gh.list_releases(repo)
+        found = find_updater_asset(releases_by_repo[repo], platform)
         if not found:
             if platform.pinned_tag:
                 raise SystemExit(
-                    f"updater {cfg.updater_repo} has no {platform.updater_asset} "
+                    f"updater {repo} has no {platform.updater_asset} "
                     f"in pinned release {platform.pinned_tag}"
                 )
             if platform.optional:
                 log(f"  skipping {platform.key}: no {platform.updater_asset} published yet")
                 continue
             raise SystemExit(
-                f"updater {cfg.updater_repo} has no asset named {platform.updater_asset}; "
+                f"updater {repo} has no asset named {platform.updater_asset}; "
                 f"cannot build {platform.key}"
             )
         release, asset = found
         chosen[platform.key] = {
+            "repo": repo,
             "tag": release_tag(release),
             "name": str(asset["name"]),
             "size": int(asset.get("size") or 0),
             "id": asset.get("id"),
             "url": asset.get("browser_download_url"),
         }
-        log(f"  updater {platform.key}: {asset['name']} from {release_tag(release)}")
+        log(
+            f"  updater {platform.key}: {asset['name']} from "
+            f"{repo}@{release_tag(release)}"
+        )
     if not chosen:
         raise SystemExit("no updater assets are available for any enabled platform")
     return chosen
@@ -198,6 +208,12 @@ def block_is_current(
         size = int(item.get("size") or 0)
         if not name or current.get(name) != size:
             return False
+    button_assets = block.get("button_assets")
+    if not isinstance(button_assets, list) or not button_assets:
+        return False
+    # The SVGs live in the repository (not as release assets), because GitHub
+    # serves release downloads as application/octet-stream.  Their presence is
+    # published by sync before any release notes are rendered.
     return True
 
 
@@ -335,6 +351,8 @@ def build_index_entry(
                 "name": name,
                 "source_asset": item.get("source_asset"),
                 "platform": item.get("platform"),
+                "model": item.get("model"),
+                "type": item.get("type"),
                 "size": int(item.get("size") or 0),
                 "sha256": item.get("sha256"),
                 "url": f"https://github.com/{cfg.mirror_repo}/releases/download/"
@@ -465,8 +483,25 @@ def download_updater_files(
             "browser_download_url": info.get("url"),
         }
         log(f"  preparing updater for {key}")
-        paths[key] = gh.download(cfg.updater_repo, asset, dest, log=log)
+        paths[key] = gh.download(str(info.get("repo") or cfg.updater_repo), asset, dest, log=log)
     return paths
+
+
+def resolve_post_install_for(
+    cfg: MirrorConfig, gh: GitHub, log: Log
+) -> Optional[postinstall.PostInstall]:
+    """Use configured links, falling back to the live catalog manifest."""
+
+    urls = list(cfg.post_installs)
+    if not urls:
+        try:
+            urls = post_installs_for_source(cfg.source_repo)
+        except (OSError, ValueError) as exc:
+            log(f"  warning: could not read post_install from manifest: {exc}")
+    if urls and list(cfg.post_installs) != urls:
+        cfg.post_installs = urls
+        log(f"  post-install: {', '.join(urls)}")
+    return postinstall.resolve(urls, gh, log=log)
 
 
 def download_release_asset(
@@ -486,6 +521,7 @@ def build_for_release(
     existing_block: Optional[Mapping[str, Any]],
     gh: GitHub,
     updater: Mapping[str, Mapping[str, Any]],
+    post_install: Optional[postinstall.PostInstall],
     ensure_updater: Callable[[str], Path],
     work: Path,
     log: Log,
@@ -494,6 +530,7 @@ def build_for_release(
     """Download, repackage and upload one release.  Returns a report entry."""
 
     tag = release_tag(release)
+    version = release_version(tag, str(release.get("name") or ""))
     source_assets = list(release.get("assets") or [])
     candidates = select_firmware_assets(source_assets, cfg)
     log(f"  firmware assets: {', '.join(str(a['name']) for a in candidates) or '(none)'}")
@@ -560,11 +597,16 @@ def build_for_release(
 
     out_dir = work / tag / "out"
     tasks = []
+    meta_by_source: Dict[str, Dict[str, str]] = {}
     for asset, _path, package in firmware:
-        meta = resolve_metadata(cfg, str(asset["name"]))
+        meta_by_source[str(asset["name"])] = resolve_metadata(
+            cfg, str(asset["name"])
+        )
+    for asset, _path, package in firmware:
+        meta = meta_by_source[str(asset["name"])]
         ini_text = fw_package_ini(
             software_name=meta["software_name"],
-            version=release_version(tag),
+            version=version,
             target_model=meta["target_model"],
             target_type=meta["target_type"],
             description=meta["description"] or str(release.get("name") or ""),
@@ -590,6 +632,8 @@ def build_for_release(
 
     def run(task) -> BuildResult:
         asset, package, platform, out_path, ini_text, meta = task
+        post = post_install.render(platform.key) if post_install else None
+        post_name, post_data = post if post else ("", b"")
         return build_portable_package(
             ensure_updater(platform.key),
             package,
@@ -597,10 +641,12 @@ def build_for_release(
             out_path,
             ini_text,
             meta["software_name"],
-            release_version(tag),
+            version,
             str(asset["name"]),
             log=log,
             source_repo=cfg.source_repo,
+            post_install_name=post_name,
+            post_install_data=post_data,
         )
 
     with ThreadPoolExecutor(max_workers=cfg.build_workers) as pool:
@@ -655,6 +701,14 @@ def build_for_release(
     stats_path.parent.mkdir(parents=True, exist_ok=True)
     stats_path.write_text(stats.text, encoding="utf-8")
 
+    used_platforms = [r.platform for r in ordered_results]
+    button_paths = release_notes.write_button_assets(
+        work / tag / "buttons", used_platforms
+    )
+    button_entries = [
+        {"name": path.name, "size": path.stat().st_size} for path in button_paths
+    ]
+
     block = {
         "v": BUILDER_VERSION,
         "fingerprint": release_fingerprint(cfg, release, updater),
@@ -668,11 +722,14 @@ def build_for_release(
                 "name": r.path.name,
                 "source_asset": r.source_asset,
                 "platform": r.platform,
+                "model": meta_by_source.get(r.source_asset, {}).get("target_model", ""),
+                "type": meta_by_source.get(r.source_asset, {}).get("target_type", ""),
                 "size": r.size,
                 "sha256": r.sha256,
             }
             for r in ordered_results
         ],
+        "button_assets": button_entries,
         "original_assets": [name for name, _ in original_files],
         "skipped": skipped_assets,
         "stats": {
@@ -683,7 +740,9 @@ def build_for_release(
         "failures": failures,
     }
     title = release_title(cfg, release)
-    notes = render_notes(release, block)
+    notes = render_notes(
+        release, block, header=release_notes.render_header(cfg, release, block)
+    )
     notes_path = work / tag / "notes.md"
     notes_path.parent.mkdir(parents=True, exist_ok=True)
     notes_path.write_text(notes, encoding="utf-8")
@@ -813,6 +872,44 @@ def sync_source_readme(
     return info
 
 
+def publish_repository_buttons(
+    cfg: MirrorConfig,
+    gh: GitHub,
+    work: Path,
+    log: Log,
+    dry_run: bool,
+) -> None:
+    """Publish the button SVGs where raw.githubusercontent.com serves them.
+
+    Release asset downloads are application/octet-stream on GitHub, so an
+    ``<img>`` pointed at a release asset is broken.  The repository copy is
+    served as image/svg+xml and is shared by every release in the mirror.
+    """
+
+    if dry_run:
+        log("  dry run: release buttons would be published to the mirror branch")
+        return
+    if not cfg.mirror_repo:
+        return
+    paths = release_notes.write_button_assets(
+        work / "release-buttons", release_notes.BUTTONS.keys()
+    )
+    changed = 0
+    for path in paths:
+        if gh.put_file(
+            cfg.mirror_repo,
+            f"{release_notes.REPOSITORY_BUTTON_DIR}/{path.name}",
+            path.read_text(encoding="utf-8"),
+            "Update portable release buttons",
+            cfg.branch,
+        ):
+            changed += 1
+    log(
+        f"  release buttons: {len(paths)} ready, {changed} updated on "
+        f"{cfg.branch}"
+    )
+
+
 def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
     log = Log(args.verbose, sink)
     cfg = load_config(
@@ -835,6 +932,7 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
         )
 
     updater = resolve_updater_assets(cfg, gh, log)
+    post_install = resolve_post_install_for(cfg, gh, log)
     releases = filter_source_releases(cfg, gh.list_releases(cfg.source_repo), args)
     log(
         f"mirroring {len(releases)} release(s) from {cfg.source_repo} "
@@ -873,7 +971,7 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
                 info = updater[key]
                 log(f"  preparing updater for {key}")
                 updater_paths[key] = gh.download(
-                    cfg.updater_repo,
+                    str(info.get("repo") or cfg.updater_repo),
                     {
                         "name": info["name"],
                         "size": info["size"],
@@ -894,6 +992,7 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
             log(f"  warning: could not mirror source README: {exc}")
             report["failures"].append({"tag": "(readme)", "error": str(exc)})
         report["source_readme"] = readme_info
+        publish_repository_buttons(cfg, gh, work_root, log, args.dry_run)
 
         # Oldest first so the newest release is created last and is what GitHub
         # shows as the latest release.
@@ -910,7 +1009,11 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
                 # Older builds appended a visible footer.  Refresh just the
                 # notes so current releases get the original body back without
                 # rebuilding their packages.
-                notes = render_notes(release, block)
+                notes = render_notes(
+                    release,
+                    block,
+                    header=release_notes.render_header(cfg, release, block),
+                )
                 if (
                     not args.dry_run
                     and str(existing.get("body") or "").strip() != notes.strip()
@@ -957,6 +1060,7 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
                     block,
                     gh,
                     updater,
+                    post_install,
                     ensure_updater,
                     work_root,
                     log,
@@ -1052,7 +1156,9 @@ def build_only(args) -> int:
     release = gh.get_release_by_tag(cfg.source_repo, tag)
     if not release:
         raise SystemExit(f"{cfg.source_repo} has no release tagged {tag}")
+    version = release_version(tag, str(release.get("name") or ""))
     updater = resolve_updater_assets(cfg, gh, log)
+    post_install = resolve_post_install_for(cfg, gh, log)
     out_dir = Path(args.out or f"dist/{tag}")
     out_dir.mkdir(parents=True, exist_ok=True)
     work = Path(args.work_dir or tempfile.mkdtemp(prefix="pfp-build-"))
@@ -1070,7 +1176,7 @@ def build_only(args) -> int:
             meta = resolve_metadata(cfg, str(asset["name"]))
             ini_text = fw_package_ini(
                 meta["software_name"],
-                release_version(tag),
+                version,
                 meta["target_model"],
                 meta["target_type"],
                 meta["description"] or str(release.get("name") or ""),
@@ -1079,6 +1185,8 @@ def build_only(args) -> int:
                 if platform.key not in updater_paths:
                     continue
                 out_path = out_dir / output_name(str(asset["name"]), platform)
+                post = post_install.render(platform.key) if post_install else None
+                post_name, post_data = post if post else ("", b"")
                 result = build_portable_package(
                     updater_paths[platform.key],
                     package,
@@ -1086,16 +1194,20 @@ def build_only(args) -> int:
                     out_path,
                     ini_text,
                     meta["software_name"],
-                    release_version(tag),
+                    version,
                     str(asset["name"]),
                     log=log,
                     source_repo=cfg.source_repo,
+                    post_install_name=post_name,
+                    post_install_data=post_data,
                 )
                 manifest["outputs"].append(
                     {
                         "name": result.path.name,
                         "source_asset": result.source_asset,
                         "platform": result.platform,
+                        "model": meta["target_model"],
+                        "type": meta["target_type"],
                         "size": result.size,
                         "sha256": result.sha256,
                     }

@@ -50,7 +50,7 @@ class UpdaterSelectionTests(unittest.TestCase):
                 "tag_name": "2.5.1",
                 "assets": [
                     asset("UpdaterCE-Linux-Portable.zip", 20, 2),
-                    asset("Innioasis.Updater.for.Mac.zip", 30, 3),
+                    asset("Innioasis.Updater.for.Mac.dmg", 30, 3),
                 ],
             },
         ]
@@ -121,10 +121,18 @@ class IndexTests(unittest.TestCase):
             "v": mirrorspec.BUILDER_VERSION,
             "fingerprint": "fp",
             "assets": [{"name": "rom-windows.zip", "size": 10}],
+            "button_assets": [{"name": "release-button-updater.svg", "size": 10}],
         }
         existing = {
             "body": "notes",
-            "assets": [{"name": "rom-windows.zip", "size": 10, "state": "uploaded"}],
+            "assets": [
+                {"name": "rom-windows.zip", "size": 10, "state": "uploaded"},
+                {
+                    "name": "release-button-updater.svg",
+                    "size": 10,
+                    "state": "uploaded",
+                },
+            ],
         }
         release = {"tag_name": "3.1.2"}
         self.assertTrue(

@@ -19,8 +19,9 @@ commented out, which is why the manifest is effectively image firmware only.
 The hosting pattern for every listed project is the same:
 
 - firmware lives in **GitHub Releases**, not in the repository tree
-- the release tag is the version (`3.1.2`, `ADB-2.1.9`, `type-b-1.7.6`,
-  `nightly-0936ff7…`, `baseline-207`)
+- the release tag identifies the release; when the original title has a
+  semantic version at its start or end (`Y2Linux 1.0 Beta 9.3.7`), that version
+  is the user-facing version instead of a build tag such as `baseline-215`
 - the release carries one or more ZIP assets, named by package role:
   `rom.zip` (Y1 Type A), `rom_type_b.zip` (Y1 Type B), `rom_y2.zip` (Y2), and
   occasionally `update.zip` (an SD-card update, not a flash package)
@@ -48,39 +49,39 @@ Updater CE itself adds two relevant behaviours:
 then from the package folder. This workflow writes it in both places. On macOS
 only the package folder is read, so it is written beside the `.app`.
 
-## The portable app zips
+The `version` field follows Updater CE's release-label rules. A semantic
+version at the start or end of the original release title wins; otherwise a
+semantic version in the tag is used; otherwise datestamp tags such as
+`20261013` are written as `October 13 2026`. The raw tag is the final fallback.
+So `baseline-215` with the title `Y2Linux 1.0 Beta 9.3.7` writes `9.3.7`.
 
-`y1-community/updater-ce-neo` publishes, per `docs/RELEASE_FILES.md`:
+## The updater assets
+
+Windows and Linux portable packages come from
+`y1-community/updater-ce-neo`:
 
 | Platform | Asset |
 | --- | --- |
 | Windows x64 | `UpdaterCE-Windows-Portable.zip` |
-| macOS | `Innioasis.Updater.for.Mac.zip` |
 | Linux x86-64 | `UpdaterCE-Linux-Portable.zip` |
 | Linux arm64 | `UpdaterCE-Linux-Portable-arm64.zip` |
 | Windows arm64 | not published yet |
 
-The real archives (checked from the 2.5.1 release) contain:
+The real Windows/Linux archives (checked from the 2.5.1 release) contain:
 
 - Windows: `1. Install Driver First and Reboot PC.exe`, `2. Install Firmware.exe`,
   `SP_Flash_Tool/` (full tool), `_internal/`, `tools/`
 - Linux: `InnioasisUpdater`, `SP_Flash_Tool/`, `_internal/`, `adb`, `tools/`
-- macOS: `Innioasis Updater.app/`, with many symlinks inside
-  (`Contents/Frameworks/QtCore` → `../../Resources/QtCore`, etc.)
 
-Symlinks matter: naive extraction and re-zipping turns them into small text
-files and breaks the signed app bundle. `tools/packager.py` never extracts to
-disk. It copies entries from one ZIP to the other, carrying `external_attr`
-(mode bits, including `S_IFLNK`) and timestamps, and writes the symlink target
-as the entry body. Directories and symlinks are stored; everything else is
-deflated at level 9.
+macOS uses the newest `Innioasis.Updater.for.Mac.dmg` published by
+`y1-community/innioasis-updater`. The DMG is copied byte-for-byte into the
+mirror ZIP as `1. Install App and Firmware.dmg` and is not extracted, mounted
+or re-signed. It sits beside the lowercase `firmware/` folder.
 
-Note that in the macOS archive the app is named `Innioasis Updater.app`, not
-`Updater CE.app` as older `firmware.html` code assumed. The packager detects
-any root `.app` bundle instead of hard-coding a name, then renames it to
-`Install Firmware.app` and retitles `CFBundleName`/`CFBundleDisplayName`. The
-rename invalidates the upstream seal, so `Contents/_CodeSignature` is dropped
-and the copy is unsigned rather than reported as damaged.
+Symlinks matter for the Windows/Linux portable ZIPs: naive extraction and
+re-zipping can turn them into small text files. The native packager extracts
+with `ditto` and writes with `zip -y` so bundle symlinks, permissions and
+timestamps survive.
 
 ## Deployment shapes
 
@@ -102,8 +103,8 @@ updater release ─► newest per platform ──►│
                                           │
              ┌────────────────────────────┼───────────────────────────┐
              ▼                            ▼                           ▼
-   SP_Flash_Tool merge            SP_Flash_Tool merge     Install Firmware.app + Firmware/
-   (Windows x64/arm64)            (Linux x64/arm64)          (macOS)
+   SP_Flash_Tool merge            SP_Flash_Tool merge     1. Install App and Firmware.dmg
+   (Windows x64/arm64)            (Linux x64/arm64)          + firmware/ (macOS)
              └────────────────────────────┼───────────────────────────┘
                                           ▼
                      create/update release with the same tag
@@ -177,26 +178,27 @@ Windows/Linux (`sp_flash_tool`):
    `*.auth`) into `SP_Flash_Tool/`, keeping any sub-folders below the scatter
    folder. Surrounding files such as a bundled SP Flash Tool tree are stripped.
 3. Write `SP_Flash_Tool/fw_package.ini` and `fw_package.ini` at the portable
-   root.
-4. Replace `SP_Flash_Tool/history.ini` with one whose `scatterHistory` points
-   at the packaged scatter, so SP Flash Tool opens with it loaded.
+   root. macOS metadata entries (`__MACOSX` and `_MACOSX`) are omitted from
+   every platform's generated zip, including tool and firmware inputs.
+4. Replace `SP_Flash_Tool/history.ini` with one whose `lastDir` names the DA
+   and `scatterHistory` names the scatter, both as bare filenames. The DA is
+   taken from the firmware when it ships one, otherwise from the portable app;
+   this lets a user launch `flash_tool` directly without the portable updater.
 5. Upstream `history.ini` from the firmware zip is dropped for the same reason.
 
-macOS (`beside_app`):
+macOS (`beside_dmg`):
 
-1. Copy every entry of the portable zip, preserving the bundle and its
-   symlinks, and rename the root `.app` to `Install Firmware.app`.
-2. Retitle `CFBundleName`/`CFBundleDisplayName` to `Install Firmware`, and drop
-   `Contents/_CodeSignature` because the rename invalidates it.
-3. Copy only the selected scatter, the images it lists, the optional updater
+1. Copy the official `Innioasis.Updater.for.Mac.dmg` unchanged and name it
+   `1. Install App and Firmware.dmg` in the ZIP root.
+2. Copy only the selected scatter, the images it lists, the optional updater
    image and small app metadata (`manifest.json`, `*rockbox*.txt`, `*.auth`)
-   into `Firmware/` beside the app.
-4. Write `Firmware/fw_package.ini` and `README.txt` at the root.
+   into lowercase `firmware/` beside the DMG.
+3. Write `firmware/fw_package.ini` and `README.txt` at the root.
 
-Updater CE 2.5.1 looks for a scatter in the folder that contains the `.app`,
-so automatic preload needs a build that also checks the neighbouring
-`Firmware/` folder. Until that ships, the folder can still be picked manually
-from the app's file browser.
+The README tells users to open the DMG, drag `Innioasis Updater` to
+Applications, choose **Install from file...**, select the extracted `firmware`
+folder, and click **Install**. It also covers **System Settings > Privacy &
+Security > Open Anyway** if Gatekeeper blocks the app.
 
 Firmware entries that collide with tool files overwrite them. That is
 intentional: `rom.zip` is itself a working SP Flash Tool bundle, so the merged
@@ -209,7 +211,8 @@ Path traversal (`../`, absolute paths, drive letters) is rejected and logged.
 The mirror owns two representations of the source material:
 
 - the source README copied to `README.md` (configurable via `source_readme`)
-- each release body, which keeps the original notes plus an invisible build record
+- each release body, which starts with generated image buttons, keeps the
+  original notes, and ends with an invisible build record
 
 `index.json` also stores the unmodified `source_title` and `source_notes` for
 every release, plus a top-level `source_readme` object with the copied path and
@@ -226,13 +229,16 @@ hundreds of megabytes of firmware to be repackaged.
 Each mirrored release body is:
 
 ```
+<generated image-button header, grouped by model/type; images come from
+ the mirror's .mirror-assets/ folder on the branch>
+
 <original notes verbatim>
 
-<!-- portable-mirror:{"v":3,"fingerprint":"…","assets":[…],"skipped":[…],"stats":{…}} -->
+<!-- portable-mirror:{"v":9,"fingerprint":"…","assets":[…],"button_assets":[…],"skipped":[…],"stats":{…}} -->
 ```
 
-The HTML comment is invisible on GitHub, so the rendered release shows only
-the original notes. It records:
+The HTML comment is invisible on GitHub, so the rendered release shows the
+generated buttons followed by the original notes. It records:
 
 - `fingerprint`: hash of builder version, relevant config, every source asset
   (name/size/id) and the exact updater asset per platform

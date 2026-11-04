@@ -186,8 +186,8 @@ mirror title, so the table does not change. The mirror title exists for people
 browsing GitHub.
 
 Use `source_notes` for the site's own release-note page. Do not scrape the
-mirror release body: it ends with an invisible build block after the original
-content. Link “See more on GitHub” to `source_url`.
+mirror release body: it starts with generated image buttons and ends with an
+invisible build block after the original content. Link “See more on GitHub” to `source_url`.
 
 The site-side static page builder and the Updater CE post-install viewer are
 specified in [static-release-pages.md](static-release-pages.md).

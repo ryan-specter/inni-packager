@@ -94,11 +94,12 @@
       "optional": true
     },
     "macos": {
-      "updater_asset": "Innioasis.Updater.for.Mac.zip",
+      "updater_asset": "Innioasis.Updater.for.Mac.dmg",
       "suffix": "-macos.zip",
-      "layout": "beside_app",
+      "layout": "beside_dmg",
       "os": "macos",
-      "arch": "universal"
+      "arch": "universal",
+      "updater_repo": "y1-community/innioasis-updater"
     }
   }
 }

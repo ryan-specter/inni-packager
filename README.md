@@ -5,18 +5,26 @@ lives at [`ryan-specter/inni-packager`](https://github.com/ryan-specter/inni-pac
 It creates and drives one thin mirror repository per unique firmware source
 repository under the `y1-community` organisation.
 
-Each mirror repackages firmware ZIPs into ready-to-run portable
-[Innioasis Updater CE](https://github.com/y1-community/updater-ce-neo) bundles
-for Windows, Linux (x86-64 and arm64) and macOS. Old releases are backfilled,
-new releases are picked up automatically, and every mirror release keeps the
-original tag, title and release notes while gaining portable downloads. The
-source repository's README is copied into the mirror, and the public index
-carries the original titles and notes so the website can build its own release
-pages.
+Each mirror repackages firmware ZIPs into ready-to-run
+[Innioasis Updater](https://github.com/y1-community/innioasis-updater) bundles.
+Windows and Linux use the portable apps from
+[updater-ce-neo](https://github.com/y1-community/updater-ce-neo); macOS uses
+the latest `Innioasis.Updater.for.Mac.dmg`. Old releases are backfilled,
+new releases are picked up automatically, and every mirror release keeps its
+original tag and title while gaining portable downloads and a generated
+image-button install/download header above the original notes. The source
+repository's README is copied into the mirror, and the public index carries
+the original titles and notes so the website can build its own release pages.
 
 The output is what `innioasis.app/firmware.html` cannot safely build in a
 browser: the workstation app plus the firmware payload, zipped once,
 server-side, with maximum deflate.
+
+For macOS users, the bundled `README.txt` explains the exact flow: open the
+DMG, install the app, choose **Install from file...**, select the extracted
+`firmware` folder (the original software download's Firmware folder), and
+click **Install**. It also covers **System Settings → Privacy & Security →
+Open Anyway**.
 
 ## What a mirrored release looks like
 
@@ -29,13 +37,15 @@ For a source release tagged `3.1.2` with `rom.zip`:
 | `rom-windows-arm64.zip` | Windows arm64 | same, built automatically once upstream publishes the arm64 app |
 | `rom-linux.zip` | Linux x86-64 | portable app + `SP_Flash_Tool/` firmware + `fw_package.ini` |
 | `rom-linux-arm64.zip` | Linux arm64 | same, automatic once upstream publishes the arm64 app |
-| `rom-macos.zip` | macOS (universal) | `Install Firmware.app` + `Firmware/` folder with the images and `fw_package.ini` |
+| `rom-macos.zip` | macOS (universal) | signed DMG copied as `1. Install App and Firmware.dmg` + lowercase `firmware/` folder with the images and `fw_package.ini` |
 | `stats.txt` | all | cumulative source and mirror download figures |
 
-Release title: `Portable Flashing Package: <original title>`. The original
-notes are copied verbatim; no visible footer or extra text is added to the
-body. The same original title and notes are stored in `index.json` as
-`source_title` and `source_notes`.
+Release title: `Portable Flashing Package: <original title>`. Each body starts
+with generated image buttons: **Get it on Updater CE**, then the available
+Windows, Linux and macOS portable ZIPs, grouped by device model and type when
+a release contains more than one. The original notes follow unchanged. The
+same original title and notes are stored in `index.json` as `source_title` and
+`source_notes`.
 
 Each mirror also copies the source repository's files, excluding `.github`
 workflows and actions. The mirror keeps its own `mirror.config.json`, generated
@@ -55,29 +65,35 @@ files or enter firmware details.
 2. Zips that look like SP Flash Tool packages are selected. Anything without a
    `*scatter*.txt` is skipped, so Rockbox `update.zip`-style SD-card updates
    are not mistaken for flashable firmware.
-3. For each platform it picks the newest `updater-ce-neo` release that actually
-   ships that platform's portable ZIP (releases are staggered upstream).
-4. The portable ZIP is streamed into a new ZIP at deflate level 9. macOS
-   symlinks, permission bits and timestamps are preserved; the app is renamed
-   `Install Firmware.app` and the firmware goes into a neighbouring `Firmware/`
-   folder (on Windows/Linux it is merged into `SP_Flash_Tool/`). `history.ini`
-   and `fw_package.ini` are written so SP Flash Tool and Updater CE pick the
-   right scatter.
+3. Windows and Linux pick the newest `updater-ce-neo` release that ships their
+   portable ZIP. macOS uses the newest DMG from `innioasis-updater`.
+4. The portable ZIP is streamed into a new ZIP at deflate level 9. For macOS,
+   the official `Innioasis.Updater.for.Mac.dmg` is copied byte-for-byte and
+   named `1. Install App and Firmware.dmg`; the firmware goes into a
+   neighbouring lowercase `firmware/` folder. On Windows/Linux the portable
+   app stays at the root and firmware is merged into `SP_Flash_Tool/`.
+   `history.ini` and `fw_package.ini` are written so SP Flash Tool and Updater
+   CE pick the right scatter and DA. The history entries use bare filenames,
+   so launching `SP_Flash_Tool/flash_tool` directly works without the updater.
 5. A release with the same tag is created or updated in the mirror repository,
    and the assets are uploaded.
 6. `stats.txt` is written to every mirrored release, and the source README is
    copied into the mirror repository.
 7. `index.json` is regenerated and committed. It includes `source_title`,
-   `source_notes` and a top-level `source_readme` URL in addition to the
-   portable assets. The website reads the index from `raw.githubusercontent.com`,
-   avoiding GitHub API rate limits.
+   `source_notes`, per-asset model/type metadata and a top-level
+   `source_readme` URL in addition to the portable assets. The website reads
+   the index from `raw.githubusercontent.com`, avoiding GitHub API rate limits.
 
-Every mirror release body ends with an invisible
-`<!-- portable-mirror:{...} -->` record with a fingerprint of its inputs. A
+Every mirror release body starts with generated image-button links and ends
+with an invisible `<!-- portable-mirror:{...} -->` record with a fingerprint of
+its inputs. The small button SVGs are published to `.mirror-assets/` on the
+mirror branch, where `raw.githubusercontent.com` serves them as SVG; GitHub
+release assets are downloaded as `application/octet-stream` and cannot be used
+as rendered images. The notes therefore do not depend on a site deploy. A
 later run skips the release when the source assets, config and Updater CE
-build are unchanged, so scheduled runs are cheap and idempotent. The moment
-Updater CE publishes a new portable build for a platform, the fingerprint
-changes and every affected release is rebuilt around the new app version.
+build are unchanged, so scheduled runs are cheap and idempotent. The moment Updater CE
+publishes a new portable build for a platform, the fingerprint changes and
+every affected release is rebuilt around the new app version.
 
 `stats.txt` records GitHub download events for the source assets and for every
 mirror asset. Counts are snapshotted into a baseline before an asset is
@@ -161,7 +177,53 @@ a long backfill does not accumulate files locally.
 `gh` is only needed for uploading and for private-repository downloads. Public
 repositories can be read without it.
 
-## Desktop app
+## Desktop apps
+
+### Mirror Watch (native menu bar)
+
+`tools/build_mirror_watch.sh` builds `dist/Mirror Watch.app`, a self-contained
+SwiftUI menu-bar app for the current Mac architecture. It does not invoke
+Python or dispatch GitHub Actions. All GitHub access, release creation, asset
+uploading and index publishing happen directly on the Mac through the REST API.
+
+The app reads `slidia_manifest.xml`, groups its `type="img"` rows into logical
+products, creates missing `y1-community/<source>-mirror` repositories plus
+their generated `mirror.config.json` files, and upgrades legacy configs with
+the platform definitions needed by the native packager. It caches the newest portable app
+assets for Windows and Linux from `y1-community/updater-ce-neo` and the newest
+macOS DMG from `y1-community/innioasis-updater`, then downloads source
+firmware, detects the scatter, builds `1. Install App and Firmware.dmg` +
+`firmware/` on macOS and `SP_Flash_Tool/` packages on Windows/Linux, uploads
+the release assets, and updates `index.json`. Releases keep their original
+titles and notes. The shared sync is the path that adds the generated
+release-note button header.
+
+The menu-bar panel is deliberately just a live activity feed: checking the
+manifest, creating a repository, downloading a portable app, packing each
+platform, uploading each asset, and updating the index. Settings holds the
+direct GitHub token (stored in Keychain), organization, manifest URL, polling
+interval and auto-run toggle. A token needs repository contents write and
+organization administration for automatic mirror creation.
+
+```bash
+# Build, self-test the native packager, and package the app
+tools/build_mirror_watch.sh
+open "dist/Mirror Watch.app"
+
+# Read-only live check (also reports manifest products and missing mirrors)
+dist/Mirror\ Watch.app/Contents/MacOS/MirrorWatch --check
+
+# Pre-download the newest portable app for every published OS/architecture
+dist/Mirror\ Watch.app/Contents/MacOS/MirrorWatch --cache-apps
+
+# Replace every macOS package with the latest Innioasis DMG + firmware layout
+dist/Mirror\ Watch.app/Contents/MacOS/MirrorWatch --replace-macos
+
+# Repair and fully audit every mirror, packing and uploading missing assets
+dist/Mirror\ Watch.app/Contents/MacOS/MirrorWatch --sync-all
+```
+
+### Mirror Manager (Tkinter control panel)
 
 `tools/build_app.sh` builds `dist/Mirror Manager.app`, a universal2 (Intel and
 Apple silicon) Tkinter control panel for the mirrors. It reviews every mirror
@@ -186,6 +248,8 @@ mirror.config.json               # standalone config; mirrors get generated conf
 .github/workflows/onboard.yml    # central repo onboarding workflow
 .github/workflows/reusable-mirror.yml  # called by every y1-community mirror
 .github/workflows/mirror.yml     # optional manual standalone runner
+macos/MirrorWatch/              # native SwiftUI menu-bar mirror app
+tools/build_mirror_watch.sh      # build and self-test the native app
 tools/portable_mirror.py         # sync / build / status CLI
 tools/onboard.py                 # create/configure y1-community mirrors
 tools/manifest.py                # slidia_manifest.xml parser + config generator
