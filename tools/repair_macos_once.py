@@ -167,7 +167,11 @@ def repair_release(
                 work / "src" / source_name,
             )
             try:
-                package = inspect_firmware(source_path, source_repo=cfg.source_repo)
+                package = inspect_firmware(
+                    source_path,
+                    source_repo=cfg.source_repo,
+                    preferred_scatter=cfg.scatter,
+                )
             except PackagingError as exc:
                 log(f"  {tag}: {source_name}: not usable firmware: {exc}")
                 continue

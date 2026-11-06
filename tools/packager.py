@@ -176,8 +176,15 @@ def _copy_info(
         shutil.copyfileobj(reader, writer, BUFFER_SIZE)
 
 
-def inspect_firmware(path: Path, source_repo: str = "") -> FirmwarePackage:
-    """Find the scatter file and its folder inside a firmware zip."""
+def inspect_firmware(
+    path: Path, source_repo: str = "", preferred_scatter: str = ""
+) -> FirmwarePackage:
+    """Find the scatter file and its folder inside a firmware zip.
+
+    ``preferred_scatter`` selects a basename when a stock archive carries
+    alternative hardware layouts (for example MT6572 for Y1 and MT6582 for Y2
+    in the same ``rom_y2.zip``).
+    """
 
     try:
         with zipfile.ZipFile(path) as zf:
@@ -215,6 +222,11 @@ def inspect_firmware(path: Path, source_repo: str = "") -> FirmwarePackage:
 
     basenames = [posixpath.basename(n) for n in groups[scatter_dir]]
     chosen: Optional[str] = None
+    preferred = preferred_scatter.strip()
+    if preferred:
+        matches = [n for n in basenames if n.lower() == preferred.lower()]
+        if len(matches) == 1:
+            chosen = matches[0]
     android = [n for n in basenames if "ndroid_scatter" in n.lower()]
     if len(android) == 1:
         chosen = android[0]
@@ -353,11 +365,14 @@ def _scatter_listed_files(text: str) -> Set[str]:
 
 
 def _optional_package_file(rel: str) -> bool:
-    """Metadata the updater reads from the package root."""
+    """Metadata the updater reads from the package root or metadata/ folder."""
 
-    if posixpath.dirname(rel):
-        return False
+    parent = posixpath.dirname(rel).lower()
     name = posixpath.basename(rel).lower()
+    if parent == "metadata":
+        return name.endswith(".json")
+    if parent:
+        return False
     return (
         name in PACKAGE_IMAGE_NAMES
         or name == "manifest.json"
@@ -397,6 +412,31 @@ def _firmware_plan(
         if chosen:
             keep.add(chosen.lower())
         present: Set[str] = set()
+
+        # Secure-boot stock archives ship signed images (``boot-sign.img``)
+        # while the scatter keeps the logical name (``boot.img``).  Copy the
+        # signed bytes under the name the scatter declares so SP Flash Tool
+        # and Updater CE find them.
+        available: Set[str] = set()
+        for info in zf.infolist():
+            name = _safe_name(info.filename)
+            if name is None or name.endswith("/"):
+                continue
+            if base_prefix:
+                if not name.startswith(base_prefix):
+                    continue
+                available.add(name[len(base_prefix) :].lower())
+            else:
+                available.add(name.lower())
+        alias_targets: Dict[str, str] = {}
+        for name in required or ():
+            key = name.lower()
+            if key in available:
+                continue
+            stem, ext = posixpath.splitext(name)
+            signed = f"{stem}-sign{ext}".lower()
+            if signed in available:
+                alias_targets[signed] = name
 
         for info in zf.infolist():
             name = _safe_name(info.filename)
@@ -445,6 +485,10 @@ def _firmware_plan(
                     if not any(item.startswith(rel_lower) for item in keep):
                         continue
                 elif rel_lower not in keep and not _optional_package_file(rel_lower):
+                    alias_target = alias_targets.get(rel_lower)
+                    if alias_target:
+                        present.add(alias_target.lower())
+                        plan.append((info.filename, alias_target, False))
                     continue
             plan.append((info.filename, rel, is_dir))
 

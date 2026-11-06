@@ -278,7 +278,12 @@ def review_mirror(
 ) -> Dict[str, Any]:
     """Review every selected source release against the mirror repository."""
 
-    updater = resolve_updater_assets(cfg, gh, log or Log())
+    active_log = log or Log()
+    updater = resolve_updater_assets(cfg, gh, active_log)
+    # sync adds the manifest's post-install links to the config before it
+    # fingerprints a build.  Do the same here, or every release that has one
+    # looks stale to review/status even though it was just built.
+    resolve_post_install_for(cfg, gh, active_log)
     releases = filter_source_releases(cfg, gh.list_releases(cfg.source_repo), args)
     rows: List[Dict[str, Any]] = []
     for release in releases:
@@ -553,7 +558,11 @@ def build_for_release(
     for asset in downloadable:
         path = download_release_asset(cfg, gh, asset, src_dir, log)
         try:
-            package = inspect_firmware(path, source_repo=cfg.source_repo)
+            package = inspect_firmware(
+                path,
+                source_repo=cfg.source_repo,
+                preferred_scatter=cfg.scatter,
+            )
         except PackagingError as exc:
             log(f"  skipping {asset['name']}: {exc}")
             skipped_assets.append({"name": str(asset["name"]), "reason": str(exc)})
@@ -1169,7 +1178,11 @@ def build_only(args) -> int:
         candidates = select_firmware_assets(release.get("assets") or [], cfg)
         for asset in candidates:
             path = download_release_asset(cfg, gh, asset, work / "src", log)
-            package = inspect_firmware(path, source_repo=cfg.source_repo)
+            package = inspect_firmware(
+                path,
+                source_repo=cfg.source_repo,
+                preferred_scatter=cfg.scatter,
+            )
             if cfg.require_scatter and not package.scatters:
                 log(f"skipping {asset['name']}: no scatter")
                 continue
@@ -1238,6 +1251,7 @@ def status(args) -> int:
     )
     gh = GitHub()
     updater = resolve_updater_assets(cfg, gh, log)
+    resolve_post_install_for(cfg, gh, log)
     releases = filter_source_releases(cfg, gh.list_releases(cfg.source_repo), args)
     for release in releases:
         tag = release_tag(release)

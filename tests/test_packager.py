@@ -193,6 +193,74 @@ class PackagerTests(unittest.TestCase):
                 "multi.zip",
             )
 
+    def test_signed_images_are_packed_under_scatter_names(self):
+        signed = self.tmp / "rom-signed.zip"
+        scatter = (
+            "- partition_index: SYS0\n"
+            "  partition_name: boot\n"
+            "  file_name: boot.img\n"
+            "  is_download: true\n"
+            "- partition_index: SYS1\n"
+            "  partition_name: system\n"
+            "  file_name: system.img\n"
+            "  is_download: true\n"
+        ).encode("utf-8")
+        write_zip(
+            signed,
+            [
+                ("MT6753_Android_scatter.txt", scatter, FILE_MODE),
+                ("boot-sign.img", b"signed boot", FILE_MODE),
+                ("system-sign.img", b"signed system", FILE_MODE),
+            ],
+        )
+        package = inspect_firmware(signed)
+        out = self.tmp / "signed-windows.zip"
+        build_portable_package(
+            self.windows_tool,
+            package,
+            self.cfg.platform("windows"),
+            out,
+            self.ini,
+            "Original Software",
+            "1.0",
+            "rom-signed.zip",
+        )
+        names = names_of(out)
+        self.assertIn("SP_Flash_Tool/boot.img", names)
+        self.assertIn("SP_Flash_Tool/system.img", names)
+        self.assertNotIn("SP_Flash_Tool/boot-sign.img", names)
+        self.assertNotIn("SP_Flash_Tool/system-sign.img", names)
+
+    def test_preferred_scatter_chooses_a_hardware_layout(self):
+        multi = self.tmp / "dual.zip"
+        write_zip(
+            multi,
+            [
+                ("MT6572_Android_scatter.txt", b"y1 layout", FILE_MODE),
+                ("MT6582_Android_scatter.txt", b"y2 layout", FILE_MODE),
+                ("boot.img", b"boot", FILE_MODE),
+            ],
+        )
+        package = inspect_firmware(multi, preferred_scatter="MT6582_Android_scatter.txt")
+        self.assertEqual(package.chosen_scatter, "MT6582_Android_scatter.txt")
+        out = self.tmp / "dual-windows.zip"
+        build_portable_package(
+            self.windows_tool,
+            package,
+            self.cfg.platform("windows"),
+            out,
+            self.ini,
+            "Original Software",
+            "1.0",
+            "dual.zip",
+        )
+        names = names_of(out)
+        self.assertIn("SP_Flash_Tool/MT6582_Android_scatter.txt", names)
+        self.assertNotIn("SP_Flash_Tool/MT6572_Android_scatter.txt", names)
+        with zipfile.ZipFile(out) as archive:
+            history = archive.read("SP_Flash_Tool/history.ini").decode("utf-8")
+        self.assertIn("scatterHistory=MT6582_Android_scatter.txt", history)
+
     def test_only_scatter_listed_files_and_icon_are_packed(self):
         pruned = self.tmp / "pruned.zip"
         scatter = (

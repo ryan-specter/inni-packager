@@ -35,7 +35,7 @@ from manifest import (
     parse_manifest,
 )
 
-SITE_REPO = "y1-community/Innioasis-Updater"
+SITE_REPO = "ryan-specter/Innioasis-Updater"
 SITE_MANIFEST = "slidia_manifest.xml"
 PACKAGE_TAG_RE = re.compile(r"<package\b[^>]*?/>")
 ATTRIBUTE_RE = re.compile(r'([A-Za-z_][\w:.-]*)\s*=\s*"([^"]*)"')
@@ -298,6 +298,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         description="Create and configure y1-community firmware mirrors."
     )
     parser.add_argument("--manifest", default=MANIFEST_URL)
+    parser.add_argument(
+        "--include-commented",
+        action="store_true",
+        help="include commented-out type=img rows (per-model stock ROMs)",
+    )
     parser.add_argument("--org", default="y1-community")
     parser.add_argument("--suffix", default="-mirror")
     parser.add_argument(
@@ -333,7 +338,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     only = parse_csv(args.only)
     skip = parse_csv(args.skip)
     try:
-        packages = parse_manifest(fetch_manifest(args.manifest))
+        packages = parse_manifest(
+            fetch_manifest(args.manifest), include_commented=args.include_commented
+        )
         products = group_products(packages, org=args.org, suffix=args.suffix)
     except (OSError, ValueError, GitHubError) as exc:
         print(f"error: could not read manifest: {exc}")

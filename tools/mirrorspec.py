@@ -190,6 +190,9 @@ class MirrorConfig:
     readme_commit_message: str = DEFAULT_README_COMMIT
     tags_allow: List[str] = field(default_factory=list)
     tags_exclude: List[str] = field(default_factory=list)
+    # Basename of the scatter to use when a stock archive carries more than
+    # one hardware layout (for example MT6572 and MT6582 in rom_y2.zip).
+    scatter: str = ""
     max_asset_bytes: int = 2 * 1024 * 1024 * 1024
     config_path: Optional[Path] = None
     raw: Dict[str, Any] = field(default_factory=dict)
@@ -377,6 +380,7 @@ def load_config(
         firmware_include=include,
         firmware_exclude=exclude,
         require_scatter=bool(firmware_raw.get("require_scatter", True)),
+        scatter=str(firmware_raw.get("scatter") or "").strip(),
         software_name=str(defaults.get("software_name") or ""),
         target_model=str(defaults.get("target_model") or ""),
         target_type=str(defaults.get("target_type") or ""),
@@ -645,6 +649,9 @@ def config_fingerprint(cfg: MirrorConfig) -> str:
             "include": cfg.firmware_include,
             "exclude": cfg.firmware_exclude,
             "require_scatter": cfg.require_scatter,
+            # Only include an explicit choice.  Omitting it keeps the
+            # fingerprint of every existing mirror unchanged.
+            **({"scatter": cfg.scatter} if cfg.scatter else {}),
         },
         "copy_original_assets": cfg.copy_original_assets,
         "defaults": {

@@ -56,7 +56,22 @@ def products():
     return manifest.group_products(manifest.parse_manifest(SAMPLE))
 
 
+COMMENTED = """<slidia>
+  <!-- <package name="Original Software" repo="y1-community/g1-stock-rom" device="G1" type="img" package_name="rom_g1.zip" /> -->
+</slidia>
+"""
+
+
 class ManifestSyncTests(unittest.TestCase):
+    def test_portable_zips_reach_commented_rows(self):
+        text, rows = onboard.set_portable_zips(
+            COMMENTED,
+            {"y1-community/g1-stock-rom": "y1-community/g1-stock-rom-mirror"},
+        )
+        self.assertEqual(rows, 1)
+        self.assertIn('portable_zips="y1-community/g1-stock-rom-mirror"', text)
+        self.assertTrue(text.lstrip().startswith("<slidia>"))
+        self.assertIn("<!--", text)
     def test_portable_zips_are_added_only_to_matching_img_rows(self):
         text, rows = onboard.set_portable_zips(
             SAMPLE,
@@ -83,14 +98,14 @@ class ManifestSyncTests(unittest.TestCase):
 
     def test_sync_site_manifest_commits_once(self):
         fake = FakeGitHub()
-        fake.files[("y1-community/Innioasis-Updater", "slidia_manifest.xml")] = {
+        fake.files[(onboard.SITE_REPO, "slidia_manifest.xml")] = {
             "text": SAMPLE,
             "sha": "manifest-sha",
         }
         report = onboard.sync_site_manifest(fake, products(), log=lambda _message: None)
         self.assertEqual(report["action"], "updated")
         self.assertEqual(report["rows"], 3)
-        updated = fake.files[("y1-community/Innioasis-Updater", "slidia_manifest.xml")]["text"]
+        updated = fake.files[(onboard.SITE_REPO, "slidia_manifest.xml")]["text"]
         self.assertIn('portable_zips="y1-community/rondo-mirror"', updated)
 
 

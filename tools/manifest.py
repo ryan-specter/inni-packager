@@ -20,6 +20,9 @@ from xml.etree import ElementTree
 MANIFEST_URL = "https://innioasis.app/slidia_manifest.xml"
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SAFE_NAME = re.compile(r"[^a-z0-9._-]+")
+_COMMENT_RE = re.compile(r"<!--(.*?)-->", re.DOTALL)
+_PACKAGE_TAG_RE = re.compile(r"<package\b[^>]*?/\s*>", re.DOTALL)
+_ATTRIBUTE_RE = re.compile(r'([A-Za-z_][\w:.-]*)\s*=\s*"([^"]*)"')
 
 
 @dataclass(frozen=True)
@@ -83,8 +86,51 @@ def fetch_manifest(location: str = MANIFEST_URL, timeout: int = 45) -> str:
     return Path(location).read_text(encoding="utf-8")
 
 
-def parse_manifest(text: str) -> List[ManifestPackage]:
-    """Parse ``<package type="img">`` rows, skipping comments and APKs."""
+def _package_from_attributes(attributes: Mapping[str, str]) -> Optional[ManifestPackage]:
+    """Build one img row from XML attributes, or None when it is not usable."""
+
+    if (attributes.get("type") or "").lower() != "img":
+        return None
+    repo = (attributes.get("repo") or "").strip()
+    if not REPO_RE.match(repo):
+        return None
+    return ManifestPackage(
+        name=(attributes.get("name") or "").strip(),
+        repo=repo,
+        device=(attributes.get("device") or "").strip(),
+        package_type="img",
+        post_install=(attributes.get("post_install") or "").strip(),
+        derivative=(attributes.get("derivative") or "").strip(),
+    )
+
+
+def _commented_packages(text: str) -> List[ManifestPackage]:
+    """Read the img rows that are commented out in the manifest.
+
+    The catalogue keeps models that are not published in the app yet behind
+    XML comments.  Their releases still exist and still need portable
+    packages, so onboarding can opt into reading them without changing how
+    the app or the website interprets the live manifest.
+    """
+
+    packages: List[ManifestPackage] = []
+    for comment in _COMMENT_RE.findall(text):
+        for tag in _PACKAGE_TAG_RE.findall(comment):
+            package = _package_from_attributes(dict(_ATTRIBUTE_RE.findall(tag)))
+            if package is not None:
+                packages.append(package)
+    return packages
+
+
+def parse_manifest(
+    text: str, include_commented: bool = False
+) -> List[ManifestPackage]:
+    """Parse ``<package type="img">`` rows, skipping comments and APKs.
+
+    ``include_commented`` also returns rows that are commented out, which is
+    how the per-model stock ROM repositories are registered before the app
+    lists them.  Active rows win when the same row appears both ways.
+    """
 
     try:
         root = ElementTree.fromstring(text)
@@ -93,21 +139,21 @@ def parse_manifest(text: str) -> List[ManifestPackage]:
 
     packages: List[ManifestPackage] = []
     for element in root.findall("package"):
-        if (element.get("type") or "").lower() != "img":
-            continue
-        repo = (element.get("repo") or "").strip()
-        if not REPO_RE.match(repo):
-            continue
-        packages.append(
-            ManifestPackage(
-                name=(element.get("name") or "").strip(),
-                repo=repo,
-                device=(element.get("device") or "").strip(),
-                package_type="img",
-                post_install=(element.get("post_install") or "").strip(),
-                derivative=(element.get("derivative") or "").strip(),
-            )
-        )
+        package = _package_from_attributes(element.attrib)
+        if package is not None:
+            packages.append(package)
+
+    if include_commented:
+        seen: set = {
+            (package.repo.lower(), package.device.upper(), package.name)
+            for package in packages
+        }
+        for package in _commented_packages(text):
+            key = (package.repo.lower(), package.device.upper(), package.name)
+            if key in seen:
+                continue
+            seen.add(key)
+            packages.append(package)
     return packages
 
 
@@ -180,9 +226,9 @@ def product_config(
 
     devices = product.devices or ["Y1"]
     default_model = "Y1" if "Y1" in devices else devices[0]
-    if default_model not in ("Y1", "Y2", "Generic MTK"):
-        default_model = "Y1"
-    default_type = "Stock" if default_model == "Y2" else "Type A"
+    # Per-model stock archives (G1, G3, Q5, R1P, ...) are real models, not
+    # aliases for Y1.  The metadata must name the model the package restores.
+    default_type = "Stock" if default_model != "Y1" else "Type A"
 
     # Most ROMs use rom.zip for the product default.  The extra rules cover
     # the names used across the manifest: type B, Y1/Y2, and Rockbox's
