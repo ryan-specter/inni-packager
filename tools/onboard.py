@@ -35,7 +35,7 @@ from manifest import (
     parse_manifest,
 )
 
-SITE_REPO = "ryan-specter/Innioasis-Updater"
+SITE_REPO = "y1-community/Innioasis-Updater"
 SITE_MANIFEST = "slidia_manifest.xml"
 PACKAGE_TAG_RE = re.compile(r"<package\b[^>]*?/>")
 ATTRIBUTE_RE = re.compile(r'([A-Za-z_][\w:.-]*)\s*=\s*"([^"]*)"')
