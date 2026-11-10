@@ -129,10 +129,14 @@ jobs:
         if: ${{ always() && inputs.dry_run != true }}
         run: |
           set -euo pipefail
-          if [ -n "$(git status --porcelain -- index.json)" ]; then
+          # The mirrored source tree brings its own .gitignore, and a project
+          # that ignores JSON outputs would otherwise make git skip the index
+          # we generate.  The index is a build artifact of this workflow, so
+          # stage it explicitly.
+          git add -f index.json
+          if ! git diff --cached --quiet -- index.json; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add index.json
             git commit -m "Update portable package index"
             git push || { git pull --rebase --autostash && git push; }
           else
