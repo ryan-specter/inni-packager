@@ -36,14 +36,10 @@ BUTTONS: "OrderedDict[str, Tuple[str, str]]" = OrderedDict(
         ("windows-arm64", ("Download .zip for Windows arm64", "portable package")),
         (
             "windows-legacy",
-            ("Download .zip for Windows 7", "XP/7/8.1 · SP Flash Tool guide"),
+            ("Download .zip for Windows XP/7/8", "32/64-bit · SP Flash Tool"),
         ),
         ("linux", ("Download .zip for Linux", "x86-64 · portable package")),
         ("linux-arm64", ("Download .zip for Linux arm64", "portable package")),
-        (
-            "linux-legacy",
-            ("Download .zip for 32-bit Linux", "pre-AppImage · SP Flash Tool"),
-        ),
         (
             "macos",
             ("Download .zip for macOS 12+", "Intel + Apple silicon"),

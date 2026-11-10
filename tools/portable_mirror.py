@@ -188,7 +188,11 @@ def filter_source_releases(
         index, total = shard
         # Splitting a long backfill across parallel jobs keeps every job under
         # the Actions time limit.  The slice is stable for a given release list.
-        selected = [release for position, release in enumerate(selected) if position % total == index]
+        selected = [
+            release
+            for position, release in enumerate(selected)
+            if position % total == index
+        ]
     return selected
 
 
@@ -808,8 +812,6 @@ def build_for_release(
             source_repo=cfg.source_repo,
             post_install_name=post_name,
             post_install_data=post_data,
-            target_model=meta["target_model"],
-            target_type=meta["target_type"],
         )
 
     with ThreadPoolExecutor(max_workers=cfg.build_workers) as pool:
@@ -1173,8 +1175,8 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
             cfg, mirror_source_releases(cfg, gh, log), args
         )
         log(
-            f"re-packing {len(releases)} release(s) from {cfg.mirror_repo or '(dry run)'} "
-            f"stored firmware into {cfg.mirror_repo or '(dry run)'}"
+            f"re-packing {len(releases)} release(s) from "
+            f"{cfg.mirror_repo or '(dry run)'} stored firmware"
         )
     else:
         releases = filter_source_releases(
