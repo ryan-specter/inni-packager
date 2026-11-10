@@ -18,7 +18,14 @@ class ConfigTests(unittest.TestCase):
         keys = [p.key for p in self.cfg.platforms]
         self.assertEqual(
             keys,
-            ["windows", "windows-arm64", "linux", "linux-arm64", "macos"],
+            [
+                "windows",
+                "windows-arm64",
+                "windows-legacy",
+                "linux",
+                "linux-arm64",
+                "macos",
+            ],
         )
 
     def test_output_names(self):
@@ -26,6 +33,7 @@ class ConfigTests(unittest.TestCase):
         expected = {
             "windows": "rom-windows.zip",
             "windows-arm64": "rom-windows-arm64.zip",
+            "windows-legacy": "rom-windows-legacy.zip",
             "linux": "rom-linux.zip",
             "linux-arm64": "rom-linux-arm64.zip",
             "macos": "rom-macos.zip",
@@ -39,11 +47,40 @@ class ConfigTests(unittest.TestCase):
             "rom_y2-linux-arm64.zip",
         )
 
+    def test_legacy_platform_is_flagged_and_optional(self):
+        legacy = self.cfg.platform("windows-legacy")
+        self.assertTrue(legacy.legacy)
+        self.assertTrue(legacy.optional)
+        self.assertEqual(
+            legacy.updater_asset, "Innioasis-SP-Flash-Tool-windows-legacy.zip"
+        )
+        self.assertIn("SP_Flash_Tool-Windows.zip", legacy.alt_assets)
+        self.assertEqual(legacy.layout, "sp_flash_tool")
+        self.assertFalse(self.cfg.platform("windows").legacy)
+
+    def test_legacy_output_is_not_selected_as_firmware(self):
+        assets = [
+            {"name": "rom.zip", "size": 10},
+            {"name": "rom-windows-legacy.zip", "size": 10},
+        ]
+        selected = [
+            a["name"] for a in mirrorspec.select_firmware_assets(assets, self.cfg)
+        ]
+        self.assertEqual(selected, ["rom.zip"])
+
+    def test_legacy_donate_txt_lists_every_link(self):
+        text = mirrorspec.legacy_donate_txt("Original Software", "2.5", "rom.zip")
+        for _label, url in mirrorspec.DONATION_LINKS:
+            self.assertIn(url, text)
+        self.assertIn("rom.zip", text)
+
     def test_firmware_selection(self):
         assets = [
             {"name": "rom.zip", "size": 10},
             {"name": "rom-windows.zip", "size": 10},
+            {"name": "rom-windows-legacy.zip", "size": 10},
             {"name": "UpdaterCE-Windows-Portable.zip", "size": 10},
+            {"name": "SP_Flash_Tool-Windows.zip", "size": 10},
             {"name": "updater.jpg", "size": 10},
             {"name": "system.img", "size": 10},
             {"name": "com.innioasis.y1_2.1.9.apk", "size": 10},

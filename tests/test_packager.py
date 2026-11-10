@@ -1,8 +1,10 @@
 import os
 import plistlib
+import random
 import sys
 import unittest
 import zipfile
+import zlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from packager import (  # noqa: E402
     PackagingError,
     build_portable_package,
     inspect_firmware,
+    repack_firmware_zip,
 )
 
 DIR_MODE = (0o40755 << 16) | 0x10
@@ -34,6 +37,42 @@ def write_zip(path, entries):
 def names_of(path):
     with zipfile.ZipFile(path) as archive:
         return archive.namelist()
+
+
+def deflate_payload():
+    """Bytes whose level 6 and level 9 deflate sizes differ."""
+
+    words = [
+        b"system",
+        b"boot",
+        b"vendor",
+        b"recovery",
+        b"partition",
+        b"scatter",
+        b"android",
+        b"firmware",
+        b"flash",
+        b"updater",
+        b"image",
+        b"userdata",
+        b"cache",
+        b"metadata",
+        b"preloader",
+        b"logo",
+        b"lk",
+        b"bootimg",
+        b"sparse",
+        b"chunk",
+    ]
+    rng = random.Random(20261106)
+    return b" ".join(rng.choice(words) for _ in range(60000)) + bytes(
+        rng.randrange(256) for _ in range(20000)
+    )
+
+
+def raw_deflate(data, level=9):
+    compressor = zlib.compressobj(level, zlib.DEFLATED, -15)
+    return compressor.compress(data) + compressor.flush()
 
 
 class PackagerTests(unittest.TestCase):
@@ -168,6 +207,57 @@ class PackagerTests(unittest.TestCase):
             [n for n in mac_names if n.lower().endswith("scatter.txt")],
             ["Firmware/MT6572_Android_scatter.txt"],
         )
+
+    def test_legacy_package_carries_donate_note_and_flash_tool_only(self):
+        # Windows XP/7/8 users get the flash tool on its own, not the Updater CE
+        # app, plus the note that says how the projects can be supported.
+        tool_only = self.tmp / "flash-tool-only.zip"
+        write_zip(
+            tool_only,
+            [
+                ("SP_Flash_Tool/", b"", DIR_MODE),
+                ("SP_Flash_Tool/flash_tool.exe", b"tool", FILE_MODE),
+                ("SP_Flash_Tool/MTK_AllInOne_DA.bin", b"da", FILE_MODE),
+                ("SP_Flash_Tool/history.ini", b"[old]\n", FILE_MODE),
+            ],
+        )
+        out = self.tmp / "rom-windows-legacy.zip"
+        result = build_portable_package(
+            tool_only,
+            inspect_firmware(self.firmware),
+            self.cfg.platform("windows-legacy"),
+            out,
+            self.ini,
+            "Original Software",
+            "3.1.2",
+            "rom.zip",
+        )
+        self.assertEqual(result.platform, "windows-legacy")
+        names = names_of(out)
+        self.assertIn("SP_Flash_Tool/flash_tool.exe", names)
+        self.assertIn("donate.txt", names)
+        self.assertIn("SP_Flash_Tool/donate.txt", names)
+        self.assertIn("README.txt", names)
+        self.assertIn("SP_Flash_Tool/MT6572_Android_scatter.txt", names)
+        self.assertNotIn("InnioasisUpdater", names)
+        with zipfile.ZipFile(out) as archive:
+            donate = archive.read("donate.txt").decode("utf-8")
+        for _label, url in mirrorspec.DONATION_LINKS:
+            self.assertIn(url, donate)
+
+    def test_windows_package_has_no_donate_note(self):
+        out = self.tmp / "rom-windows.zip"
+        build_portable_package(
+            self.windows_tool,
+            inspect_firmware(self.firmware),
+            self.cfg.platform("windows"),
+            out,
+            self.ini,
+            "Original Software",
+            "3.1.2",
+            "rom.zip",
+        )
+        self.assertNotIn("donate.txt", names_of(out))
 
     def test_multiple_scatter_files_are_refused(self):
         multi = self.tmp / "multi.zip"
@@ -531,7 +621,8 @@ class PackagerTests(unittest.TestCase):
         self.assert_no_macos_metadata(names)
         with zipfile.ZipFile(out) as archive:
             info = archive.getinfo("1. Install App and Firmware.dmg")
-            self.assertEqual(info.compress_type, zipfile.ZIP_STORED)
+            self.assertEqual(info.compress_type, zipfile.ZIP_DEFLATED)
+            self.assertEqual(info.compress_size, len(raw_deflate(dmg_bytes)))
             self.assertEqual(archive.read(info), dmg_bytes)
             self.assertEqual(archive.read("3. After Install Steps.url"), post)
             readme = archive.read("README.txt").decode("utf-8")
@@ -634,6 +725,112 @@ class PackagerTests(unittest.TestCase):
         broken.write_bytes(b"not a zip")
         with self.assertRaises(PackagingError):
             inspect_firmware(broken)
+
+    def test_copied_entries_use_maximum_deflate(self):
+        payload = deflate_payload()
+        self.assertNotEqual(
+            len(raw_deflate(payload, 6)),
+            len(raw_deflate(payload, 9)),
+            "fixture must distinguish level 6 from level 9",
+        )
+        compressed = self.tmp / "compressed.zip"
+        write_zip(
+            compressed,
+            [
+                ("MT6572_Android_scatter.txt", b"scatter", FILE_MODE),
+                ("boot.img", payload, FILE_MODE),
+            ],
+        )
+        out = self.tmp / "compressed-windows.zip"
+        build_portable_package(
+            self.windows_tool,
+            inspect_firmware(compressed),
+            self.cfg.platform("windows"),
+            out,
+            self.ini,
+            "Original Software",
+            "1",
+            "compressed.zip",
+        )
+        with zipfile.ZipFile(out) as archive:
+            info = archive.getinfo("SP_Flash_Tool/boot.img")
+            self.assertEqual(info.compress_type, zipfile.ZIP_DEFLATED)
+            self.assertEqual(info.compress_size, len(raw_deflate(payload, 9)))
+
+    def test_original_zip_is_repacked_and_stray_scatters_are_stripped(self):
+        payload = deflate_payload()
+        source = self.tmp / "stock-original.zip"
+        write_zip(
+            source,
+            [
+                ("MT6582_Android_scatter.txt", b"standard", FILE_MODE),
+                ("MT6582_Android_scatter_def.txt", b"def layout", FILE_MODE),
+                ("MT6582_Android_scatter_preserve_data.txt", b"stray", FILE_MODE),
+                ("boot.img", payload, FILE_MODE),
+                ("images/", b"", DIR_MODE),
+                ("images/system.img", payload, FILE_MODE),
+                ("Innioasis Updater.app/Contents/Frameworks/QtCore", b"link", LINK_MODE),
+            ],
+        )
+        out = self.tmp / "stock-original-repacked.zip"
+        result = repack_firmware_zip(source, out)
+        names = names_of(out)
+        self.assertIn("MT6582_Android_scatter.txt", names)
+        self.assertNotIn("MT6582_Android_scatter_def.txt", names)
+        self.assertNotIn("MT6582_Android_scatter_preserve_data.txt", names)
+        self.assertIn("boot.img", names)
+        self.assertIn("images/", names)
+        self.assertIn("images/system.img", names)
+        self.assertIn("Innioasis Updater.app/Contents/Frameworks/QtCore", names)
+        self.assertEqual(
+            result.stripped,
+            [
+                "MT6582_Android_scatter_def.txt",
+                "MT6582_Android_scatter_preserve_data.txt",
+            ],
+        )
+        self.assertLess(result.size, source.stat().st_size)
+        with zipfile.ZipFile(out) as archive:
+            info = archive.getinfo("boot.img")
+            self.assertEqual(info.compress_type, zipfile.ZIP_DEFLATED)
+            self.assertEqual(info.compress_size, len(raw_deflate(payload, 9)))
+            self.assertEqual(archive.read("boot.img"), payload)
+            symlink = archive.getinfo(
+                "Innioasis Updater.app/Contents/Frameworks/QtCore"
+            )
+            self.assertEqual(symlink.external_attr >> 16 & 0o170000, 0o120000)
+
+    def test_original_zip_with_one_nonstandard_scatter_keeps_it(self):
+        source = self.tmp / "one-scatter.zip"
+        write_zip(
+            source,
+            [
+                ("MT6582_Android_scatter_def.txt", b"only layout", FILE_MODE),
+                ("boot.img", b"boot", FILE_MODE),
+            ],
+        )
+        out = self.tmp / "one-scatter-repacked.zip"
+        result = repack_firmware_zip(source, out)
+        self.assertIn("MT6582_Android_scatter_def.txt", names_of(out))
+        self.assertEqual(result.stripped, [])
+
+    def test_original_zip_keeps_every_standard_scatter(self):
+        source = self.tmp / "two-standard.zip"
+        write_zip(
+            source,
+            [
+                ("MT6572_Android_scatter.txt", b"y1 layout", FILE_MODE),
+                ("MT6582_Android_scatter.txt", b"y2 layout", FILE_MODE),
+                ("boot.img", b"boot", FILE_MODE),
+            ],
+        )
+        out = self.tmp / "two-standard-repacked.zip"
+        result = repack_firmware_zip(source, out)
+        self.assertEqual(
+            sorted(n for n in names_of(out) if "scatter" in n.lower()),
+            ["MT6572_Android_scatter.txt", "MT6582_Android_scatter.txt"],
+        )
+        self.assertEqual(result.stripped, [])
 
 
 if __name__ == "__main__":

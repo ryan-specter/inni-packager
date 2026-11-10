@@ -19,6 +19,11 @@ are stripped; only what the scatter declares is needed.
 
 Everything is written with maximum deflate.  No file is buffered whole in
 memory; large partition images stream through a 1 MiB window.
+
+``repack_firmware_zip`` applies the same maximum deflate to an unchanged
+original firmware zip.  When such a zip carries more than one scatter layout,
+only the standard ``*_Android_scatter.txt`` files survive; layouts that stray
+from that name (a ``_def``/preserve-data variant, for example) are stripped.
 """
 
 from __future__ import annotations
@@ -37,6 +42,8 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from mirrorspec import (
     Platform,
+    legacy_donate_txt,
+    legacy_readme,
     macos_dmg_readme,
     macos_readme,
 )
@@ -96,6 +103,15 @@ class BuildResult:
     platform: str
     entries: int
     skipped_entries: List[str] = field(default_factory=list)
+
+
+@dataclass
+class RepackResult:
+    path: Path
+    size: int
+    sha256: str
+    entries: int
+    stripped: List[str] = field(default_factory=list)
 
 
 def _safe_name(raw: str) -> Optional[str]:
@@ -159,6 +175,10 @@ def _copy_info(
     target.create_system = info.create_system
     target.comment = info.comment
     target.compress_type = compress_type
+    # A ZipInfo carries its own compression level; ZipFile.open() ignores the
+    # archive's compresslevel when it is handed an existing ZipInfo.  Without
+    # this every streamed entry would silently use zlib's default level 6.
+    target._compresslevel = COMPRESS_LEVEL
     # Declare the size so zipfile selects ZIP64 for entries that expand past
     # 4 GiB.  Large sparse partition images inside a firmware zip do, and
     # streaming them into a non-ZIP64 entry fails with "File size too large,
@@ -517,6 +537,111 @@ def _sha256(path: Path) -> Tuple[str, int]:
     return digest.hexdigest(), size
 
 
+def _is_standard_scatter(name: str) -> bool:
+    """True for the MediaTek ``M*****_Android_scatter.txt`` spelling."""
+
+    return posixpath.basename(name).lower().endswith("android_scatter.txt")
+
+
+def _original_scatter_keep(names: List[str]) -> Set[str]:
+    """Choose which scatter entries an untouched original zip keeps.
+
+    A stock zip with a single scatter is left alone.  When several layouts are
+    present, keep the standard ``*_Android_scatter.txt`` files and strip the
+    variants that stray from that name.  If none of them uses the standard
+    name, keep every scatter rather than guessing.
+    """
+
+    scatters = [name for name in names if _is_scatter_name(name)]
+    if len(scatters) < 2:
+        return set(scatters)
+    standard = [name for name in scatters if _is_standard_scatter(name)]
+    return set(standard or scatters)
+
+
+def repack_firmware_zip(
+    source: Path, out_path: Path, log: Optional[Callable[[str], None]] = None
+) -> RepackResult:
+    """Rewrite an original firmware zip with maximum deflate.
+
+    Entry names, timestamps, permissions and symlinks are preserved so the
+    archive still behaves like the source.  Only alternate scatter files are
+    dropped, and only when the zip carries more than one scatter layout and at
+    least one uses the standard ``*_Android_scatter.txt`` name.
+    """
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if out_path.exists():
+        out_path.unlink()
+    if source.resolve() == out_path.resolve():
+        raise PackagingError(f"{source.name} would overwrite itself")
+
+    try:
+        with zipfile.ZipFile(source) as src:
+            infos = src.infolist()
+            keep = _original_scatter_keep([info.filename for info in infos])
+            stripped = [
+                info.filename
+                for info in infos
+                if _is_scatter_name(info.filename)
+                and info.filename not in keep
+            ]
+            entries = 0
+            with zipfile.ZipFile(
+                out_path,
+                "w",
+                compression=zipfile.ZIP_DEFLATED,
+                compresslevel=COMPRESS_LEVEL,
+                allowZip64=True,
+            ) as dst:
+                for info in infos:
+                    if info.filename in stripped:
+                        continue
+                    target = zipfile.ZipInfo(
+                        info.filename, _safe_date_time(info)
+                    )
+                    target.external_attr = info.external_attr
+                    target.internal_attr = info.internal_attr
+                    target.create_system = info.create_system
+                    target.comment = info.comment
+                    target.compress_type = (
+                        zipfile.ZIP_STORED
+                        if info.filename.endswith("/") or _is_symlink(info)
+                        else zipfile.ZIP_DEFLATED
+                    )
+                    target._compresslevel = COMPRESS_LEVEL
+                    target.file_size = info.file_size
+                    if info.filename.endswith("/") or _is_symlink(info):
+                        dst.writestr(target, src.read(info))
+                    else:
+                        with src.open(info) as reader, dst.open(
+                            target,
+                            "w",
+                            force_zip64=target.file_size * 1.05
+                            > zipfile.ZIP64_LIMIT,
+                        ) as writer:
+                            shutil.copyfileobj(reader, writer, BUFFER_SIZE)
+                    entries += 1
+    except (zipfile.BadZipFile, OSError, RuntimeError) as exc:
+        raise PackagingError(f"{source.name} is not a readable zip: {exc}") from exc
+
+    digest, size = _sha256(out_path)
+    before = source.stat().st_size
+    if log:
+        log(
+            f"    repacked {source.name} "
+            f"({before / 1024 / 1024:.1f} -> {size / 1024 / 1024:.1f} MiB, "
+            f"{entries} entries)"
+        )
+    return RepackResult(
+        path=out_path,
+        size=size,
+        sha256=digest,
+        entries=entries,
+        stripped=stripped,
+    )
+
+
 def build_portable_package(
     tool_zip_path: Path,
     firmware: FirmwarePackage,
@@ -599,6 +724,20 @@ def build_portable_package(
             extra_files[sp_prefix + "history.ini"] = HISTORY_INI.format(
                 scatter=scatter_name, da=da_name
             ).encode("utf-8")
+            if platform.legacy:
+                # Windows XP/7/8 and 32-bit Windows cannot run Updater CE, so
+                # the package explains the tool beside the firmware and shows
+                # where the projects can be supported.  The note stays in the
+                # extraction root and beside flash_tool.exe, because a reader
+                # who unzips with Explorer often only sees one of the two.
+                donate = legacy_donate_txt(
+                    software_name, version, source_asset
+                ).encode("utf-8")
+                extra_files["donate.txt"] = donate
+                extra_files[sp_prefix + "donate.txt"] = donate
+                extra_files["README.txt"] = legacy_readme(
+                    software_name, version, source_asset, scatter_name
+                ).encode("utf-8")
         elif dmg_layout:
             extra_files[MAC_DMG_FIRMWARE_DIR + "/fw_package.ini"] = ini_text.encode(
                 "utf-8"
@@ -656,12 +795,13 @@ def build_portable_package(
             allowZip64=True,
         ) as dst:
             if dmg_layout:
-                # Keep the signed DMG byte-for-byte identical; recompressing it
-                # would waste time and make the copy differ from upstream.
+                # The extracted DMG stays byte-for-byte identical; deflating
+                # the zip member only shrinks its transport size.
                 dst.write(
                     tool_zip_path,
                     arcname=MAC_DMG_NAME,
-                    compress_type=zipfile.ZIP_STORED,
+                    compress_type=zipfile.ZIP_DEFLATED,
+                    compresslevel=COMPRESS_LEVEL,
                 )
                 entries += 1
             else:

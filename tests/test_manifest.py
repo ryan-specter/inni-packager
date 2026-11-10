@@ -94,7 +94,14 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(loaded.mirror_repo, "y1-community/y1-stock-rom-mirror")
         self.assertEqual(
             [p.key for p in loaded.platforms],
-            ["windows", "windows-arm64", "linux", "linux-arm64", "macos"],
+            [
+                "windows",
+                "windows-arm64",
+                "windows-legacy",
+                "linux",
+                "linux-arm64",
+                "macos",
+            ],
         )
 
     def test_caller_workflow_uses_the_central_repository(self):

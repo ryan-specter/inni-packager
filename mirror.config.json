@@ -19,6 +19,7 @@
     "exclude": [
       "*-windows.zip",
       "*-windows-arm64.zip",
+      "*-windows-legacy.zip",
       "*-linux.zip",
       "*-linux-arm64.zip",
       "*-macos.zip",            "*portable*.zip",
@@ -77,6 +78,16 @@
       "os": "windows",
       "arch": "arm64",
       "optional": true
+    },
+    "windows-legacy": {
+      "updater_asset": "Innioasis-SP-Flash-Tool-windows-legacy.zip",
+      "updater_asset_alternates": ["SP_Flash_Tool-Windows.zip"],
+      "suffix": "-windows-legacy.zip",
+      "layout": "sp_flash_tool",
+      "os": "windows",
+      "arch": "x86",
+      "optional": true,
+      "legacy": true
     },
     "linux": {
       "updater_asset": "UpdaterCE-Linux-Portable.zip",

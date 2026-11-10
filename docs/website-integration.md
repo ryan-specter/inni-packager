@@ -72,12 +72,20 @@ when available (Chromium), then fall back to the user agent and
 | --- | --- | --- |
 | Windows | x86-64 | `windows` |
 | Windows | arm64 | `windows-arm64` |
+| Windows XP–8.1 / 32-bit Windows | x86 | `windows-legacy` |
 | Linux | x86-64 | `linux` |
 | Linux | arm64 | `linux-arm64` |
 | macOS | any | `macos` |
 
 The module already does this and maps macOS to the universal key. Treat
 unknown OS or architecture as "no portable package" and fall back.
+
+`windows-legacy` is the exception that is chosen by operating system, not by
+architecture: Updater CE needs 64-bit Windows 10 1809 or newer, so Windows XP
+through 8.1 and 32-bit Windows get `<rom>-windows-legacy.zip`, which carries SP
+Flash Tool beside the firmware instead of the app. A browser cannot report the
+Windows 10 build number, so never classify Windows 10 or 11 as legacy unless
+the browser also reports 32-bit without WOW64.
 
 Also accept a `?platform=windows` style override for support and testing.
 

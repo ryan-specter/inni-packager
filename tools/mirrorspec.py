@@ -42,7 +42,12 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 # 11: reference scatters shipped inside the portable app itself
 #     (_internal/assets/compat) are stripped, so the firmware's scatter is the
 #     only scatter anywhere in a Windows/Linux package.
-BUILDER_VERSION = 11
+# 12: every zip member is deflated at level 9, including streamed copies and
+#     the macOS DMG; original firmware zips are repacked the same way and keep
+#     only standard *_Android_scatter.txt layouts when several are present.
+# 13: Windows XP/7/8 packages are built from the flash-tool-only asset and
+#     carry donate.txt, for computers that cannot run Updater CE.
+BUILDER_VERSION = 13
 
 DEFAULT_BRANCH = "main"
 DEFAULT_TITLE_PREFIX = "Portable Flashing Package: "
@@ -53,6 +58,7 @@ DEFAULT_README_COMMIT = "Mirror source README"
 # Suffixes this project owns.  Used to keep our own output out of the source
 # asset selection (which matters when a clone points at another mirror).
 KNOWN_SUFFIXES = (
+    "-windows-legacy.zip",
     "-windows.zip",
     "-windows-arm64.zip",
     "-linux.zip",
@@ -60,7 +66,19 @@ KNOWN_SUFFIXES = (
     "-macos.zip",
 )
 
+# Legacy Windows packages wrap the SP Flash Tool instead of Updater CE.  They
+# must keep working on Windows XP, Vista, 7 and 8/8.1, where the PySide6 app
+# cannot run, so they carry a plain-text note with the ways to support the
+# project rather than a link to the app's own pages.
+DONATION_URL = "https://innioasis.app/support_devs.html"
+DONATION_LINKS = (
+    ("Buy Me a Coffee", "https://buymeacoffee.com/ryanspecter"),
+    ("Boosty", "https://boosty.to/ryanspecter"),
+    ("All support options", DONATION_URL),
+)
+
 DEFAULT_FIRMWARE_EXCLUDES = (
+    "*-windows-legacy.zip",
     "*-windows.zip",
     "*-windows-arm64.zip",
     "*-linux.zip",
@@ -102,6 +120,23 @@ DEFAULT_PLATFORMS: Dict[str, Dict[str, Any]] = {
         "os": "windows",
         "arch": "arm64",
         "optional": True,
+    },
+    # Windows XP/Vista/7/8/8.1 and 32-bit Windows cannot run Updater CE.  The
+    # updater repository publishes the SP Flash Tool on its own, so the same
+    # firmware is packed beside that tool instead of the app.  Optional until
+    # the first flash-tool-only asset is published upstream.
+    "windows-legacy": {
+        "updater_asset": "Innioasis-SP-Flash-Tool-windows-legacy.zip",
+        # Older runs of the updater build published the same tool under a
+        # plainer name.  Either asset is accepted so a mirror never fails just
+        # because the upstream name changed.
+        "updater_asset_alternates": ["SP_Flash_Tool-Windows.zip"],
+        "suffix": "-windows-legacy.zip",
+        "layout": "sp_flash_tool",
+        "os": "windows",
+        "arch": "x86",
+        "optional": True,
+        "legacy": True,
     },
     "linux": {
         "updater_asset": "UpdaterCE-Linux-Portable.zip",
@@ -146,6 +181,11 @@ class Platform:
     optional: bool = False
     pinned_tag: str = ""
     updater_repo: str = ""
+    # Legacy packages wrap the flash tool alone and explain how to support the
+    # project, because the Updater CE app cannot run on that computer.
+    legacy: bool = False
+    # Other published names for the same upstream asset.
+    alt_assets: Tuple[str, ...] = ()
 
     def describe(self) -> str:
         return f"{self.key} ({self.os}/{self.arch}, {self.layout})"
@@ -309,6 +349,10 @@ def load_config(
             continue
         base.update(override)
         _expect(bool(base.get("updater_asset")), f"platforms.{key}.updater_asset is required")
+        alternates = _as_list(
+            base.get("updater_asset_alternates"),
+            f"platforms.{key}.updater_asset_alternates",
+        )
         _expect(bool(base.get("suffix")), f"platforms.{key}.suffix is required")
         layout = base.get("layout") or "sp_flash_tool"
         _expect(
@@ -326,6 +370,8 @@ def load_config(
                 optional=bool(base.get("optional")),
                 pinned_tag=str(base.get("tag") or ""),
                 updater_repo=str(base.get("updater_repo") or ""),
+                legacy=bool(base.get("legacy")),
+                alt_assets=tuple(a for a in alternates if a != base["updater_asset"]),
             )
         )
 
@@ -641,6 +687,8 @@ def config_fingerprint(cfg: MirrorConfig) -> str:
                 "layout": p.layout,
                 "pinned": p.pinned_tag,
                 "updater_repo": p.updater_repo,
+                "legacy": p.legacy,
+                "alt_assets": list(p.alt_assets),
             }
             for p in cfg.platforms
         ],
@@ -711,6 +759,8 @@ def release_fingerprint(
                 "name": value.get("name"),
                 "size": value.get("size"),
                 "id": value.get("id"),
+                "digest": value.get("digest"),
+                "updated_at": value.get("updated_at"),
             }
             for key, value in sorted(updater_assets.items())
         },
@@ -755,6 +805,79 @@ def render_notes(
         sections.append(body)
     sections.append(marker)
     return "\n\n".join(sections).strip() + "\n"
+
+
+def legacy_donate_txt(software: str, version: str, firmware_asset: str) -> str:
+    """A plain-text note for computers that cannot run Updater CE.
+
+    It is written by every legacy package so a Windows XP/7/8 user still sees
+    where the project can be supported after the install, without opening a
+    browser first.  Every URL is spelled out so it also works when copied to a
+    machine that is not online.
+    """
+
+    title = " ".join(part for part in (software, version) if part).strip()
+    lines = [
+        "Thank you for using this Innioasis firmware package.",
+        "",
+        f"Firmware: {title or software or 'Innioasis firmware'}",
+        f"Download: {firmware_asset}",
+        "",
+        "Updater CE cannot run on this computer, so this download includes the",
+        "same SP Flash Tool that Updater CE bundles, with the firmware already",
+        "in its SP_Flash_Tool folder.",
+        "",
+        "If this work saved you time, you can support the community projects that",
+        "keep these players usable:",
+        "",
+    ]
+    for label, url in DONATION_LINKS:
+        lines.append(f"  {label}: {url}")
+    lines += [
+        "",
+        "Support is optional. Nothing in this package is limited by whether you",
+        "donate.",
+        "",
+    ]
+    return "\r\n".join(lines)
+
+
+def legacy_readme(
+    software: str, version: str, firmware_asset: str, scatter: str
+) -> str:
+    """Quick-start for the SP Flash Tool package on older Windows."""
+
+    title = " ".join(part for part in (software, version) if part).strip()
+    lines = [
+        "Innioasis Firmware + SP Flash Tool (Windows XP/7/8, 32-bit and 64-bit)",
+        "=====================================================================",
+        "",
+        f"Firmware: {title or software or 'Innioasis firmware'} ({firmware_asset})",
+        "",
+        "This download is for computers that cannot run Innioasis Updater CE:",
+        "Windows XP, Vista, 7, 8 or 8.1, and 32-bit Windows.",
+        "",
+        "How to install the firmware:",
+        "1. Right-click this zip and choose Extract All. Do not run anything",
+        "   from inside the zip window.",
+        "2. Open the SP_Flash_Tool folder and run flash_tool.exe.",
+        "3. In the Download tab, choose the scatter file that came with this",
+        f"   package ({scatter}).",
+        "4. Leave every partition ticked as the scatter set it, then click",
+        "   Download. When the tool is waiting, power the player fully off and",
+        "   connect it with a USB cable that carries data.",
+        "5. Wait for the green check mark before unplugging anything.",
+        "",
+        "Windows 10 and 11 can use Updater CE instead, which also covers macOS",
+        "and Linux: https://innioasis.app/install/legacy-windows.html",
+        "",
+        "If the player is not detected, install the MediaTek USB driver in the",
+        "Driver folder, restart the PC, and try another USB port.",
+        "",
+        "donate.txt lists the ways to support the projects behind this firmware.",
+        "",
+    ]
+    return "\r\n".join(lines)
 
 
 def macos_dmg_readme(

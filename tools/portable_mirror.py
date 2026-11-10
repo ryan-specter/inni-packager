@@ -55,6 +55,7 @@ from packager import (
     PackagingError,
     build_portable_package,
     inspect_firmware,
+    repack_firmware_zip,
 )
 from stats import STATS_ASSET, StatsReport, build_stats, prepare_baseline
 
@@ -100,7 +101,8 @@ def release_tag(release: Mapping[str, Any]) -> str:
 def find_updater_asset(
     releases: Sequence[Mapping[str, Any]], platform: Platform
 ) -> Optional[Tuple[Mapping[str, Any], Mapping[str, Any]]]:
-    wanted = platform.updater_asset.lower()
+    wanted = {platform.updater_asset.lower()}
+    wanted.update(name.lower() for name in platform.alt_assets)
     for release in releases:
         if release.get("draft"):
             continue
@@ -108,7 +110,7 @@ def find_updater_asset(
         if platform.pinned_tag and tag != platform.pinned_tag:
             continue
         for asset in release.get("assets") or []:
-            if str(asset.get("name") or "").lower() == wanted:
+            if str(asset.get("name") or "").lower() in wanted:
                 return release, asset
     return None
 
@@ -132,8 +134,9 @@ def resolve_updater_assets(
             if platform.optional:
                 log(f"  skipping {platform.key}: no {platform.updater_asset} published yet")
                 continue
+            names = ", ".join((platform.updater_asset,) + platform.alt_assets)
             raise SystemExit(
-                f"updater {repo} has no asset named {platform.updater_asset}; "
+                f"updater {repo} has no asset named {names}; "
                 f"cannot build {platform.key}"
             )
         release, asset = found
@@ -143,6 +146,8 @@ def resolve_updater_assets(
             "name": str(asset["name"]),
             "size": int(asset.get("size") or 0),
             "id": asset.get("id"),
+            "digest": str(asset.get("digest") or ""),
+            "updated_at": str(asset.get("updated_at") or ""),
             "url": asset.get("browser_download_url"),
         }
         log(
@@ -199,18 +204,41 @@ def block_is_current(
     if not isinstance(assets, list) or not assets:
         return False
     current = {
-        str(a.get("name")): int(a.get("size") or 0)
+        str(a.get("name")): a
         for a in existing.get("assets") or []
         if a.get("state", "uploaded") == "uploaded"
     }
     for item in assets:
         name = str(item.get("name") or "")
         size = int(item.get("size") or 0)
-        if not name or current.get(name) != size:
+        live = current.get(name)
+        if not name or live is None or int(live.get("size") or 0) != size:
+            return False
+        # When GitHub reports a digest, a same-sized asset with different
+        # bytes still means the published package is stale.
+        recorded = str(item.get("sha256") or "").lower()
+        digest = str(live.get("digest") or "").lower()
+        if recorded and digest and digest.rsplit(":", 1)[-1] != recorded:
             return False
     button_assets = block.get("button_assets")
     if not isinstance(button_assets, list) or not button_assets:
         return False
+    # Original assets are part of the published result too.  A missing copy or
+    # one whose size no longer matches the build record means the release is
+    # not fresh and must be repacked.
+    original_sizes = block.get("original_asset_sizes")
+    for item in block.get("original_assets") or []:
+        name = str(item)
+        live = current.get(name)
+        if live is None:
+            return False
+        expected = (
+            original_sizes.get(name)
+            if isinstance(original_sizes, dict)
+            else None
+        )
+        if expected is not None and int(live.get("size") or 0) != int(expected):
+            return False
     # The SVGs live in the repository (not as release assets), because GitHub
     # serves release downloads as application/octet-stream.  Their presence is
     # published by sync before any release notes are rendered.
@@ -246,9 +274,16 @@ def review_release(
         item["state"] = "missing-release"
         return item
 
+    block = parse_block(existing.get("body"))
     mirror_assets = {
         str(asset.get("name")): asset for asset in existing.get("assets") or []
     }
+    recorded_originals = {
+        str(name) for name in (block or {}).get("original_assets") or []
+    }
+    original_sizes = (block or {}).get("original_asset_sizes")
+    if not isinstance(original_sizes, dict):
+        original_sizes = {}
     if cfg.copy_original_assets:
         for asset in release.get("assets") or []:
             name = str(asset.get("name") or "")
@@ -259,10 +294,16 @@ def review_release(
             current = mirror_assets.get(name)
             if not current:
                 item["missing"].append(name)
+            elif name in recorded_originals:
+                # A mirrored original is a repacked copy, so its digest can
+                # never equal the source asset's digest.  Compare its size to
+                # the size recorded by the build instead.
+                expected = original_sizes.get(name)
+                if expected is None or int(current.get("size") or 0) != int(expected):
+                    item["changed"].append(name)
             elif assets_differ(asset, current):
                 item["changed"].append(name)
 
-    block = parse_block(existing.get("body"))
     fingerprint = release_fingerprint(cfg, release, updater)
     if not block_is_current(cfg, release, existing, block, fingerprint):
         item["state"] = "needs-build"
@@ -414,6 +455,7 @@ def make_index(
                 "arch": p.arch,
                 "suffix": p.suffix,
                 "layout": p.layout,
+                "legacy": p.legacy,
             }
             for p in cfg.platforms
         ],
@@ -584,8 +626,11 @@ def build_for_release(
         }
 
     original_files: List[Tuple[str, Path]] = []
+    original_asset_sizes: Dict[str, int] = {}
     if cfg.copy_original_assets:
         original_dir = work / tag / "original"
+        original_src = original_dir / "src"
+        original_out = original_dir / "out"
         downloaded = {str(asset["name"]): path for asset, path, _ in firmware}
         for asset in source_assets:
             name = str(asset.get("name") or "")
@@ -595,14 +640,30 @@ def build_for_release(
             if size > cfg.max_asset_bytes:
                 log(f"  not copying original {name}: larger than max_asset_bytes")
                 continue
-            if name in downloaded:
-                original_files.append((name, downloaded[name]))
-                continue
-            try:
-                path = download_release_asset(cfg, gh, asset, original_dir, log)
-                original_files.append((name, path))
-            except (GitHubError, ApiError) as exc:
-                log(f"  warning: could not copy original asset {name}: {exc}")
+            source_path = downloaded.get(name)
+            if source_path is None:
+                try:
+                    source_path = download_release_asset(
+                        cfg, gh, asset, original_src, log
+                    )
+                except (GitHubError, ApiError) as exc:
+                    log(f"  warning: could not copy original asset {name}: {exc}")
+                    continue
+            upload_path = source_path
+            # Stock zips get the same maximum deflate as the portable
+            # packages.  Only alternate scatter layouts are dropped, and only
+            # when a standard *_Android_scatter.txt survives.
+            if name.lower().endswith(".zip"):
+                try:
+                    repacked = repack_firmware_zip(
+                        source_path, original_out / name, log=log
+                    )
+                except PackagingError as exc:
+                    log(f"  warning: could not repack original {name}: {exc}")
+                else:
+                    upload_path = repacked.path
+            original_files.append((name, upload_path))
+            original_asset_sizes[name] = upload_path.stat().st_size
 
     out_dir = work / tag / "out"
     tasks = []
@@ -740,6 +801,7 @@ def build_for_release(
         ],
         "button_assets": button_entries,
         "original_assets": [name for name, _ in original_files],
+        "original_asset_sizes": original_asset_sizes,
         "skipped": skipped_assets,
         "stats": {
             "baseline": stats.baseline,
