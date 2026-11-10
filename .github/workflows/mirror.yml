@@ -36,6 +36,15 @@ on:
         required: false
         type: boolean
         default: false
+      mode:
+        description: "sync, repack (mirror's stored firmware) or index (rebuild index.json)"
+        required: false
+        type: string
+        default: "sync"
+      shard:
+        description: "Build one slice only, written INDEX/TOTAL"
+        required: false
+        type: string
 permissions:
   contents: write
 
@@ -72,9 +81,16 @@ jobs:
           OFFSET: ${{ inputs.offset }}
           FORCE: ${{ inputs.force }}
           DRY_RUN: ${{ inputs.dry_run }}
+          MODE: ${{ inputs.mode }}
+          SHARD: ${{ inputs.shard }}
         run: |
           set -euo pipefail
-          args=(sync)
+          sub="sync"
+          case "${MODE:-sync}" in
+            repack) sub="repack" ;;
+            index) sub="index" ;;
+          esac
+          args=("$sub")
           if [ -n "${SOURCE_REPO:-}" ]; then args+=(--source-repo "$SOURCE_REPO"); fi
           if [ -n "${TAGS:-}" ]; then args+=(--tags "$TAGS"); fi
           if [ -n "${PLATFORMS:-}" ]; then args+=(--platforms "$PLATFORMS"); fi
@@ -82,6 +98,7 @@ jobs:
           if [ -n "${OFFSET:-}" ]; then args+=(--offset "$OFFSET"); fi
           if [ "${FORCE:-false}" = "true" ]; then args+=(--force); fi
           if [ "${DRY_RUN:-false}" = "true" ]; then args+=(--dry-run); fi
+          if [ -n "${SHARD:-}" ]; then args+=(--shard "$SHARD"); fi
           python tools/portable_mirror.py "${args[@]}"
 
       - name: Commit the download index

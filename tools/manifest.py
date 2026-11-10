@@ -334,6 +334,16 @@ on:
         required: false
         type: boolean
         default: false
+      mode:
+        description: "sync, repack (mirror's stored firmware) or index (rebuild index.json)"
+        required: false
+        type: string
+        default: "sync"
+      shards:
+        description: "Split the backfill across this many parallel jobs (1 = one job)"
+        required: false
+        type: string
+        default: "1"
 
 permissions:
   contents: write
@@ -352,5 +362,7 @@ jobs:
       offset: ${{{{ inputs.offset || '' }}}}
       force: ${{{{ inputs.force || false }}}}
       dry_run: ${{{{ inputs.dry_run || false }}}}
+      mode: ${{{{ inputs.mode || 'sync' }}}}
+      shards: ${{{{ inputs.shards || '1' }}}}
     secrets: inherit
 """

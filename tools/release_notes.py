@@ -19,7 +19,7 @@ from html import escape
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 from urllib.parse import quote, urlencode
 
-from mirrorspec import MirrorConfig
+from mirrorspec import MirrorConfig, strip_block
 
 INSTALL_GUIDE_BASE = "https://innioasis.app/guide.html"
 BUTTON_PREFIX = "release-button-"
@@ -36,10 +36,14 @@ BUTTONS: "OrderedDict[str, Tuple[str, str]]" = OrderedDict(
         ("windows-arm64", ("Download .zip for Windows arm64", "portable package")),
         (
             "windows-legacy",
-            ("Download .zip for Windows XP/7/8", "32/64-bit · SP Flash Tool"),
+            ("Download .zip for Windows 7", "XP/7/8.1 · SP Flash Tool guide"),
         ),
         ("linux", ("Download .zip for Linux", "x86-64 · portable package")),
         ("linux-arm64", ("Download .zip for Linux arm64", "portable package")),
+        (
+            "linux-legacy",
+            ("Download .zip for 32-bit Linux", "pre-AppImage · SP Flash Tool"),
+        ),
         (
             "macos",
             ("Download .zip for macOS 12+", "Intel + Apple silicon"),
@@ -53,6 +57,32 @@ def button_filename(key: str) -> str:
     """Filename used for one generated button asset."""
 
     return f"{BUTTON_PREFIX}{key}.svg"
+
+
+HEADER_MARKER = ".mirror-assets/"
+SECOND_LEVEL_HEADING = "### Downloads"
+
+
+def strip_generated_header(body: str) -> str:
+    """Return the original source notes from a mirrored release body.
+
+    A mirrored body is ``generated header + source notes + hidden block``.
+    Re-packing an existing mirror release needs the notes on their own,
+    otherwise the regenerated header and the previous build record would be
+    nested inside the next body.  The header is recognised by its centred
+    button images and its trailing rule; anything else is returned untouched.
+    """
+
+    text = strip_block(body)
+    if not text.startswith('<p align="center">'):
+        return text
+    marker = text.rfind(HEADER_MARKER)
+    if marker == -1 or SECOND_LEVEL_HEADING not in text:
+        return text
+    cut = text.find("\n---\n", marker)
+    if cut == -1:
+        return text
+    return text[cut + len("\n---\n") :].strip()
 
 
 def _svg_text(value: str) -> str:

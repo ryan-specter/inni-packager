@@ -2,6 +2,17 @@ name: Portable flashing packages (reusable)
 
 # Called by the thin workflow in each y1-community/*-mirror repository.
 # The mirror owns mirror.config.json; this repository owns the packager code.
+#
+# ``mode`` selects the entrypoint:
+#   sync   - mirror the source repository's releases (the normal path)
+#   repack - rebuild the mirror's own stored firmware against the current
+#            updater release, for tags the source repository no longer serves
+#   index  - rewrite index.json from published releases, without building
+#
+# ``shards`` splits the selected releases across parallel jobs.  A long backfill
+# (dozens of releases, each several gigabytes) does not fit in the 350-minute
+# job limit otherwise.  Sharded jobs skip the index and one final job rebuilds
+# it, so parallel writers cannot drop each other's entries.
 on:
   workflow_call:
     inputs:
@@ -33,6 +44,14 @@ on:
         required: false
         type: string
         default: "main"
+      mode:
+        required: false
+        type: string
+        default: "sync"
+      shards:
+        required: false
+        type: string
+        default: "1"
     secrets:
       MIRROR_TOKEN:
         required: false
@@ -41,9 +60,35 @@ permissions:
   contents: write
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      shards: ${{ steps.plan.outputs.shards }}
+    steps:
+      - name: Decide how many packaging jobs to run
+        id: plan
+        run: |
+          set -euo pipefail
+          total="${{ inputs.shards }}"
+          case "$total" in
+            ''|*[!0-9]*) total=1 ;;
+          esac
+          if [ "$total" -lt 1 ]; then total=1; fi
+          if [ "$total" -gt 16 ]; then total=16; fi
+          echo "shards=$total" >> "$GITHUB_OUTPUT"
+          echo "matrix=$(python3 -c 'import json, sys; print(json.dumps(list(range(int(sys.argv[1])))))' "$total")" >> "$GITHUB_OUTPUT"
+
   mirror:
+    needs: plan
+    if: ${{ inputs.mode != 'index' }}
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - name: Check out the mirror
         uses: actions/checkout@v4
@@ -81,7 +126,7 @@ jobs:
         run: python -m unittest discover -s .packager/tests -v
 
       - name: Mirror source repository files
-        if: ${{ inputs.dry_run != true }}
+        if: ${{ inputs.dry_run != true && inputs.mode == 'sync' && matrix.shard == 0 }}
         run: |
           set -euo pipefail
           python .packager/tools/source_sync.py --source .source --target . --source-repo "${{ steps.source.outputs.repo }}"
@@ -114,19 +159,30 @@ jobs:
           OFFSET: ${{ inputs.offset }}
           FORCE: ${{ inputs.force }}
           DRY_RUN: ${{ inputs.dry_run }}
+          MODE: ${{ inputs.mode }}
+          SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ needs.plan.outputs.shards }}
         run: |
           set -euo pipefail
-          args=(sync --config mirror.config.json --index index.json --json-report mirror-report.json)
+          sub="sync"
+          case "${MODE:-sync}" in
+            repack) sub="repack" ;;
+            index) sub="index" ;;
+          esac
+          args=("$sub" --config mirror.config.json --index index.json --json-report "mirror-report-${SHARD}.json")
           if [ -n "${TAGS:-}" ]; then args+=(--tags "$TAGS"); fi
           if [ -n "${PLATFORMS:-}" ]; then args+=(--platforms "$PLATFORMS"); fi
           if [ -n "${LIMIT:-}" ]; then args+=(--limit "$LIMIT"); fi
           if [ -n "${OFFSET:-}" ]; then args+=(--offset "$OFFSET"); fi
           if [ "${FORCE:-false}" = "true" ]; then args+=(--force); fi
           if [ "${DRY_RUN:-false}" = "true" ]; then args+=(--dry-run); fi
+          if [ "${TOTAL:-1}" -gt 1 ] && [ "$sub" != "index" ]; then
+            args+=(--shard "$SHARD/$TOTAL" --skip-index)
+          fi
           python .packager/tools/portable_mirror.py "${args[@]}"
 
       - name: Commit the download index
-        if: ${{ always() && inputs.dry_run != true }}
+        if: ${{ always() && inputs.dry_run != true && needs.plan.outputs.shards == '1' }}
         run: |
           set -euo pipefail
           # The mirrored source tree brings its own .gitignore, and a project
@@ -147,7 +203,55 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mirror-report
-          path: mirror-report.json
+          name: mirror-report-${{ matrix.shard }}
+          path: mirror-report-*.json
           if-no-files-found: ignore
           retention-days: 14
+
+  index:
+    needs: [plan, mirror]
+    if: ${{ always() && inputs.dry_run != true && (needs.plan.outputs.shards != '1' || inputs.mode == 'index') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the mirror
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check out the packager
+        uses: actions/checkout@v4
+        with:
+          repository: ryan-specter/inni-packager
+          ref: ${{ inputs.packager_ref }}
+          path: .packager
+          fetch-depth: 1
+          token: ${{ secrets.MIRROR_TOKEN || github.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Rebuild the download index
+        env:
+          GH_TOKEN: ${{ secrets.MIRROR_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ secrets.MIRROR_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          python .packager/tools/portable_mirror.py index \
+            --config mirror.config.json --index index.json \
+            --json-report mirror-report-index.json
+
+      - name: Commit the download index
+        run: |
+          set -euo pipefail
+          git add -f index.json
+          if ! git diff --cached --quiet -- index.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Update portable package index"
+            git push || { git pull --rebase --autostash && git push; }
+          else
+            echo "index.json is unchanged"
+          fi

@@ -27,7 +27,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import quote
 
 import postinstall
@@ -49,6 +49,7 @@ from mirrorspec import (
     resolve_metadata,
     output_name,
     select_firmware_assets,
+    strip_block,
 )
 from packager import (
     BuildResult,
@@ -182,7 +183,83 @@ def filter_source_releases(
         selected = selected[args.offset :]
     if args.limit:
         selected = selected[: args.limit]
+    shard = parse_shard(getattr(args, "shard", ""))
+    if shard:
+        index, total = shard
+        # Splitting a long backfill across parallel jobs keeps every job under
+        # the Actions time limit.  The slice is stable for a given release list.
+        selected = [release for position, release in enumerate(selected) if position % total == index]
     return selected
+
+
+def parse_shard(value: Optional[str]) -> Optional[Tuple[int, int]]:
+    """Parse the ``INDEX/TOTAL`` form accepted by ``--shard``."""
+
+    if not value:
+        return None
+    text = str(value).strip()
+    index_text, _, total_text = text.partition("/")
+    try:
+        index = int(index_text)
+        total = int(total_text)
+    except ValueError as exc:
+        raise ConfigError(f"--shard must look like 0/4, not {value!r}") from exc
+    if total < 1 or not 0 <= index < total:
+        raise ConfigError(f"--shard {value!r} needs 0 <= index < total")
+    return index, total
+
+
+def mirror_release_as_source(
+    cfg: MirrorConfig, release: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """Present a mirror release the way its source release looked."""
+
+    tag = release_tag(release)
+    title = str(release.get("name") or "").strip()
+    if cfg.title_prefix and title.lower().startswith(cfg.title_prefix.lower()):
+        title = title[len(cfg.title_prefix) :].strip()
+    return {
+        "tag_name": tag,
+        "name": title or tag,
+        "body": release_notes.strip_generated_header(release.get("body")),
+        "published_at": release.get("published_at"),
+        "prerelease": bool(release.get("prerelease")),
+        "assets": list(release.get("assets") or []),
+    }
+
+
+def mirror_source_releases(
+    cfg: MirrorConfig, gh: GitHub, log: Log
+) -> List[Dict[str, Any]]:
+    """Releases that can be re-packed from the mirror's own stored firmware.
+
+    Upstream projects sometimes delete or replace the releases a mirror was
+    built from, which would leave the stored firmware zip stranded beside
+    packages built by an old updater.  Those original assets are still on the
+    mirror, so the packages can be rebuilt from them without touching the
+    source repository.
+    """
+
+    releases: List[Dict[str, Any]] = []
+    for release in gh.list_releases(cfg.mirror_repo):
+        tag = release_tag(release)
+        block = parse_block(release.get("body"))
+        if not block:
+            log(f"  skipping {tag}: no build record")
+            continue
+        names = {str(name) for name in block.get("original_assets") or []}
+        assets = [
+            asset
+            for asset in release.get("assets") or []
+            if str(asset.get("name") or "") in names
+        ]
+        if not assets:
+            log(f"  skipping {tag}: no stored firmware assets")
+            continue
+        item = mirror_release_as_source(cfg, release)
+        item["assets"] = assets
+        releases.append(item)
+    return releases
 
 
 def block_is_current(
@@ -573,6 +650,8 @@ def build_for_release(
     work: Path,
     log: Log,
     dry_run: bool = False,
+    copy_originals: bool = True,
+    keep_stats: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Download, repackage and upload one release.  Returns a report entry."""
 
@@ -627,7 +706,8 @@ def build_for_release(
 
     original_files: List[Tuple[str, Path]] = []
     original_asset_sizes: Dict[str, int] = {}
-    if cfg.copy_original_assets:
+    original_names: List[str] = []
+    if cfg.copy_original_assets and copy_originals:
         original_dir = work / tag / "original"
         original_src = original_dir / "src"
         original_out = original_dir / "out"
@@ -664,6 +744,17 @@ def build_for_release(
                     upload_path = repacked.path
             original_files.append((name, upload_path))
             original_asset_sizes[name] = upload_path.stat().st_size
+        original_names = [name for name, _ in original_files]
+    else:
+        # Re-packing an existing mirror release: the firmware inputs are the
+        # originals already stored on the mirror, so they are neither
+        # downloaded again nor re-uploaded.  Keep the recorded names so the
+        # build record and the index still describe them.
+        original_names = [
+            str(name) for name in (existing_block or {}).get("original_assets") or []
+        ]
+        recorded = (existing_block or {}).get("original_asset_sizes")
+        original_asset_sizes = dict(recorded) if isinstance(recorded, dict) else {}
 
     out_dir = work / tag / "out"
     tasks = []
@@ -717,6 +808,8 @@ def build_for_release(
             source_repo=cfg.source_repo,
             post_install_name=post_name,
             post_install_data=post_data,
+            target_model=meta["target_model"],
+            target_type=meta["target_type"],
         )
 
     with ThreadPoolExecutor(max_workers=cfg.build_workers) as pool:
@@ -750,26 +843,33 @@ def build_for_release(
             )
 
     expected_names = {r.path.name for r in ordered_results}
-    expected_names.update(name for name, _ in original_files)
+    expected_names.update(original_names)
     expected_names.add(STATS_ASSET)
-    baseline, retired = prepare_baseline(
-        existing_block,
-        (existing or {}).get("assets") or [],
-        expected_names,
-    )
-    stats = build_stats(
-        cfg,
-        release,
-        existing,
-        existing_block,
-        baseline=baseline,
-        retired=retired,
-        replacing=True,
-        expected_names=expected_names,
-    )
-    stats_path = work / tag / STATS_ASSET
-    stats_path.parent.mkdir(parents=True, exist_ok=True)
-    stats_path.write_text(stats.text, encoding="utf-8")
+    stats: Optional[StatsReport] = None
+    stats_path: Optional[Path] = None
+    if keep_stats:
+        # A repack rebuilds the packages, not the download history: keep the
+        # published stats.txt and its ledger exactly as they are.
+        log(f"  keeping {STATS_ASSET} as published")
+    else:
+        baseline, retired = prepare_baseline(
+            existing_block,
+            (existing or {}).get("assets") or [],
+            expected_names,
+        )
+        stats = build_stats(
+            cfg,
+            release,
+            existing,
+            existing_block,
+            baseline=baseline,
+            retired=retired,
+            replacing=True,
+            expected_names=expected_names,
+        )
+        stats_path = work / tag / STATS_ASSET
+        stats_path.parent.mkdir(parents=True, exist_ok=True)
+        stats_path.write_text(stats.text, encoding="utf-8")
 
     used_platforms = [r.platform for r in ordered_results]
     button_paths = release_notes.write_button_assets(
@@ -800,14 +900,18 @@ def build_for_release(
             for r in ordered_results
         ],
         "button_assets": button_entries,
-        "original_assets": [name for name, _ in original_files],
+        "original_assets": original_names,
         "original_asset_sizes": original_asset_sizes,
         "skipped": skipped_assets,
-        "stats": {
-            "baseline": stats.baseline,
-            "retired": stats.retired,
-            "generated_at": stats.generated_at,
-        },
+        "stats": (
+            {
+                "baseline": stats.baseline,
+                "retired": stats.retired,
+                "generated_at": stats.generated_at,
+            }
+            if stats
+            else dict((existing_block or {}).get("stats") or {})
+        ),
         "failures": failures,
     }
     title = release_title(cfg, release)
@@ -826,7 +930,8 @@ def build_for_release(
             raise SystemExit("mirror_repo is required to publish; set it in mirror.config.json")
         gh.ensure_release(cfg.mirror_repo, tag, title, notes_path, log=log)
         uploads = [r.path for r in ordered_results] + [path for _name, path in original_files]
-        uploads.append(stats_path)
+        if stats_path is not None:
+            uploads.append(stats_path)
         uploaded = gh.upload(cfg.mirror_repo, tag, uploads, log=log)
         log(
             f"  published {len(ordered_results)} portable package(s) for {tag} "
@@ -838,8 +943,8 @@ def build_for_release(
         "action": action,
         "title": title,
         "assets": [r.path.name for r in ordered_results],
-        "original_assets": [name for name, _ in original_files],
-        "stats": stats.totals,
+        "original_assets": original_names,
+        "stats": stats.totals if stats else dict((existing_block or {}).get("stats") or {}),
         "block": block,
         "failures": failures,
     }
@@ -981,6 +1086,61 @@ def publish_repository_buttons(
     )
 
 
+def rebuild_index(cfg: MirrorConfig, gh: GitHub, args, log: Log) -> int:
+    """Rewrite index.json from the published releases, without building.
+
+    Sharded runs deliberately skip the index, because parallel jobs would
+    overwrite each other's entries.  One cheap job rebuilds it afterwards from
+    the build records GitHub already holds.
+    """
+
+    index_path = Path(args.index) if args.index else Path("index.json")
+    previous: Optional[Dict[str, Any]] = None
+    if index_path.is_file():
+        try:
+            previous = json.loads(index_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            previous = None
+    stale: Dict[str, Mapping[str, Any]] = {
+        str(entry.get("tag")): entry
+        for entry in (previous or {}).get("releases") or []
+        if isinstance(entry, dict) and entry.get("tag")
+    }
+    try:
+        source_by_tag = {
+            release_tag(release): release
+            for release in gh.list_releases(cfg.source_repo)
+        }
+    except (GitHubError, ApiError) as exc:
+        log(f"  warning: could not read {cfg.source_repo} releases: {exc}")
+        source_by_tag = {}
+    updates: Dict[str, Mapping[str, Any]] = {}
+    for release in gh.list_releases(cfg.mirror_repo):
+        tag = release_tag(release)
+        block = parse_block(release.get("body"))
+        if not block or not block.get("assets"):
+            log(f"  skipping {tag}: no build record")
+            continue
+        source = source_by_tag.get(tag)
+        entry = build_index_entry(
+            cfg, source or mirror_release_as_source(cfg, release), block
+        )
+        if source is None:
+            # The upstream release is gone.  Keep the provenance and the
+            # original notes the index already published for this tag.
+            old = stale.get(tag) or {}
+            for key in ("source_url", "source_title", "source_notes"):
+                if old.get(key):
+                    entry[key] = old[key]
+        updates[tag] = entry
+        log(f"  indexed {tag}: {len(entry.get('assets') or [])} package(s)")
+    index = make_index(cfg, updates, previous, (previous or {}).get("source_readme"))
+    write_index(cfg, index, index_path, log)
+    if getattr(args, "publish_index", False):
+        publish_index(cfg, gh, index, log)
+    return 0
+
+
 def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
     log = Log(args.verbose, sink)
     cfg = load_config(
@@ -1002,13 +1162,28 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
             "from https://cli.github.com/."
         )
 
+    if getattr(args, "index_only", False):
+        return rebuild_index(cfg, gh, args, log)
+
+    mirror_source = bool(getattr(args, "mirror_source", False))
     updater = resolve_updater_assets(cfg, gh, log)
     post_install = resolve_post_install_for(cfg, gh, log)
-    releases = filter_source_releases(cfg, gh.list_releases(cfg.source_repo), args)
-    log(
-        f"mirroring {len(releases)} release(s) from {cfg.source_repo} "
-        f"into {cfg.mirror_repo or '(dry run)'}"
-    )
+    if mirror_source:
+        releases = filter_source_releases(
+            cfg, mirror_source_releases(cfg, gh, log), args
+        )
+        log(
+            f"re-packing {len(releases)} release(s) from {cfg.mirror_repo or '(dry run)'} "
+            f"stored firmware into {cfg.mirror_repo or '(dry run)'}"
+        )
+    else:
+        releases = filter_source_releases(
+            cfg, gh.list_releases(cfg.source_repo), args
+        )
+        log(
+            f"mirroring {len(releases)} release(s) from {cfg.source_repo} "
+            f"into {cfg.mirror_repo or '(dry run)'}"
+        )
 
     work_root = Path(args.work_dir) if args.work_dir else Path(tempfile.mkdtemp(prefix="pfp-"))
     work_root.mkdir(parents=True, exist_ok=True)
@@ -1136,6 +1311,9 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
                     work_root,
                     log,
                     dry_run=args.dry_run,
+                    copy_originals=not mirror_source,
+                    keep_stats=mirror_source
+                    or bool(getattr(args, "skip_stats", False)),
                 )
             except (GitHubError, ApiError, PackagingError, OSError) as exc:
                 log(f"  FAILED: {exc}")
@@ -1344,6 +1522,25 @@ def _common_options() -> argparse.ArgumentParser:
     common.add_argument("--keep-work", action="store_true", help="keep downloaded/build files")
     common.add_argument("--index", default="index.json", help="path to the public index")
     common.add_argument("--skip-index", action="store_true")
+    common.add_argument(
+        "--shard",
+        help="build only one slice of the selected releases, written INDEX/TOTAL",
+    )
+    common.add_argument(
+        "--mirror-source",
+        action="store_true",
+        help="re-pack the mirror's own stored firmware instead of source releases",
+    )
+    common.add_argument(
+        "--index-only",
+        action="store_true",
+        help="rewrite index.json from published releases without building",
+    )
+    common.add_argument(
+        "--skip-stats",
+        action="store_true",
+        help="keep the published stats.txt instead of regenerating it",
+    )
     common.add_argument("--json-report", default="mirror-report.json")
     common.add_argument("--verbose", action="store_true")
     return common
@@ -1368,6 +1565,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     build_cmd.add_argument("--tag", required=True)
     build_cmd.add_argument("--out", help="output directory (default dist/<tag>)")
+    repack_cmd = sub.add_parser(
+        "repack",
+        parents=[common],
+        help="re-package a mirror's stored firmware against the current updater",
+    )
+    repack_cmd.add_argument(
+        "--publish-index",
+        action="store_true",
+        help="commit index.json to the mirror repository (for local runs)",
+    )
+    index_cmd = sub.add_parser(
+        "index",
+        parents=[common],
+        help="rebuild index.json from published releases without building",
+    )
+    index_cmd.add_argument(
+        "--publish-index",
+        action="store_true",
+        help="commit index.json to the mirror repository (for local runs)",
+    )
     sub.add_parser("status", parents=[common], help="show which mirror releases are current")
     review_cmd = sub.add_parser(
         "review",
@@ -1385,6 +1602,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return status(args)
         if args.command == "review":
             return review(args)
+        if args.command == "repack":
+            args.mirror_source = True
+            args.skip_stats = True
+            return sync(args)
+        if args.command == "index":
+            args.index_only = True
+            return sync(args)
         return sync(args)
     except (ConfigError, GitHubError, ApiError, PackagingError) as exc:
         print(f"error: {exc}", file=sys.stderr)
