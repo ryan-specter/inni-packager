@@ -70,13 +70,13 @@ jobs:
           GH_TOKEN: ${{ secrets.MIRROR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.MIRROR_TOKEN }}
           APPLY: ${{ github.event_name == 'schedule' || inputs.apply }}
-          TRIGGER: ${{ inputs.trigger }}
+          TRIGGER: ${{ github.event_name == 'schedule' || inputs.trigger }}
           UPDATE_CONFIG: ${{ inputs.update_config }}
           ONLY: ${{ inputs.only }}
           SKIP: ${{ inputs.skip }}
           INCLUDE_MISSING_SOURCES: ${{ inputs.include_missing_sources }}
-          MANIFEST: ${{ inputs.manifest }}
-          ORG: ${{ inputs.org }}
+          MANIFEST: ${{ inputs.manifest || 'https://innioasis.app/slidia_manifest.xml' }}
+          ORG: ${{ inputs.org || 'y1-community' }}
         run: |
           set -euo pipefail
           args=(--manifest "$MANIFEST" --org "$ORG" --out onboarding-report.json)
