@@ -1,0 +1,53 @@
+{
+  "manifest": "68cc2d99d3d0a18b9c3e736df10cf8a13478b8b4e2409e78671b3ca223b3bd21",
+  "products": {
+    "classyplayer/classy": "d9724fa801e512dd2b4e06fbaef85dcbd03f08f792c2cc042f3cb236c7b7d6a2",
+    "fabianzettl/inniclassic": "dd7856922fc0bf2744631c93cf426f02bb0a22aac4ac6f1dfcd1d9973fdc19db",
+    "ismileblue/y1_launcher": "cb334f87e472d7811849e7e21d92db4dadb377ab4eba3027e9544d825f2700ff",
+    "jarvissax/rondo": "a30f094ab2d6f36ac2c4ca8d6cd11b08b560df75d39378021afd62792b79806d",
+    "leska1337/better-y": "e2ef21a2d7c867aebbd932b0b886e2c1a4024b23d3739a765b44600141d192a1",
+    "please-click/updates-available": "ee56d100bd2076c6d7b41a75aaf82520e2d1259a78b8d1445c1dd88049b4be5f",
+    "rockbox-y1/rockbox": "63c4f4616b42322bc609eefc4ea123f507893d45fa5e9cd70f018ce34182be6c",
+    "ryan-specter/koensayr-auto": "f91edc5583c7697e3fe805abebf669272bc7ea02bdb7d6c29a41957de13075bd",
+    "schulzcode/y2linux": "29a6cb5615e8fde754ba9fa8e765565cbd5bcc98ad1e6cf1e66910de12d4c2a9",
+    "schulzcode/y2player": "e662df443ab1b1507e59f669668ef575c1c403800868d47e6d13d2a3f390c4e9",
+    "spycemagic/y2-rockbox": "715844dd6c17db7353ba931390607d726f3b5a766ce53ebc95ccfdf4663f28df",
+    "thesolarproject/solar": "547550fe7234ce0641180e203ef6159cd86bd37a5ae2799ce5e79b0a70d92a23",
+    "y1-community/g1-stock-rom": "568ec609403624f5ead621fed69f418922b8c214d793976004e37f46c21b1c48",
+    "y1-community/g3-stock-rom": "66611346f3957b41fbae9377288f9f5da8b08c922e601c40dad82876e88f0707",
+    "y1-community/g5-stock-rom": "219d2a18924c8723ec46bc8ce207d56662d06df0906786aadeeb59feaf017d4b",
+    "y1-community/q3-stock-rom": "c1c8015b7da20675a37ee37127e7b40e4b9de966158c67439b66935b0a518108",
+    "y1-community/q5-stock-rom": "f4e28426ef9a15d15411837fd45bbeb0d283dadc42bc0d37980bfe7fb65b0867",
+    "y1-community/y1-ata-rom": "846a18e608f62f89536cd6cbeb00ea6b9ff0e562888b26bd5a89d4dae2f4fdb0",
+    "y1-community/y1-linux-rom": "8b85744e5d0bf568ee218fdf479794b80614dff6dd807a087d94a12d88a2a40c",
+    "y1-community/y1-stock-rom": "b372ce9792f506957088da067c97b65ee54d3998b8a91cf05a959e922b89f1fd",
+    "y1-community/y2-ata-rom": "c220d1ec25013f985ece8f159d0ca942691712db3ea01c10f3f4982ec8f54963"
+  },
+  "seeds": {
+    "y1-community/innioasis-updater": "c4cf2f3f8ed45bea672c6dec642797affb44ab72d38216f08fa1fe2dafb7367c",
+    "y1-community/updater-ce-neo": "fbb56a6e11c4cf89304e0f848e00b334e97e452aa35c048edf4ba97973764df5"
+  },
+  "sources": {
+    "classyplayer/classy": "df67eaa7caf5a7163b72ccf9f72bc698e0ada878760df888fb96c3a1d16bde04",
+    "fabianzettl/inniclassic": "027b925155706c69175bbc1be9a30c1060edbe6b81362c431abcfa1640c5bcfd",
+    "ismileblue/y1_launcher": "588b6bd35071ea3b3633be53385b8370da1f1a6c000adfa5431b7e8ad44436f7",
+    "jarvissax/rondo": "7d045f7ddb6e1011311df7664b083d13bc1ede4df30fabb145b0b8e7f1dc4a9d",
+    "leska1337/better-y": "395a5749e07368d56e2b7396034d1f0a5c69e2885e57f78c8374f556e437a8fd",
+    "rockbox-y1/rockbox": "69e150e27719ca27a50938b5ac9b63cfc1de93539f1a6d52ae133be7314a0b60",
+    "ryan-specter/koensayr-auto": "7ae03122ff963950d9c40014b42ff894c3fceccd565e856b324ef69ff8d9e236",
+    "schulzcode/y2linux": "bb03a1c31e702b6b4c80c323df2109652123bb4436e40d5134a7e4d72124f52f",
+    "schulzcode/y2player": "4dd8d2c5e7e7ffcd1132ec4cd5bb2a2b2e54fc9eb7a57c219c73a811d96ead97",
+    "spycemagic/y2-rockbox": "df59883b877adc749809052f37a24cfd0a0434f8a3c679884d32d8ba87aa7a49",
+    "thesolarproject/solar": "135265ca8ae34cde662084df150d75a383005886029feebbbb9ef08eaf9c4321",
+    "y1-community/g1-stock-rom": "65ed4ac33f4074502c0dadf9e07052d7a79fae1dedaf6551d12a2aac674b1d2e",
+    "y1-community/g3-stock-rom": "dacb290e688adb8011ba42e77991f77350643770ba25d285fc6d6beda5f68ac9",
+    "y1-community/g5-stock-rom": "f29578155da03aa7457bc741b593f00b4df9022737a9a3cc80478c3925895466",
+    "y1-community/q3-stock-rom": "b9cc2f605ad9048019f5ec5ba049f1af10fa23327fded756773514084fad37d1",
+    "y1-community/q5-stock-rom": "cc80ff9d313a028e78e577390ffe10e635cbcb99471d4066d8ecb3cdaf13fc73",
+    "y1-community/y1-ata-rom": "1e3ce6141a4fe089e1b38fb4622336ab081234c5c30ad2a377e423a06552c175",
+    "y1-community/y1-linux-rom": "f5400440f4fb49dd0e39b3b6320e01ea83fa3e1d055d9209645964fd5a6e568a",
+    "y1-community/y1-stock-rom": "61fca4eff5167350a8d17765c4aad14b8a780c08a23447e4d38e61893000ba8b",
+    "y1-community/y2-ata-rom": "d8c2f5df188a37231b4478d9cf46d1ec57a6e981f0eaf8552982570bc39167f6"
+  },
+  "version": 1
+}
