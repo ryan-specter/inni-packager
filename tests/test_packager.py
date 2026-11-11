@@ -242,8 +242,123 @@ class PackagerTests(unittest.TestCase):
         self.assertNotIn("InnioasisUpdater", names)
         with zipfile.ZipFile(out) as archive:
             donate = archive.read("donate.txt").decode("utf-8")
+            readme = archive.read("README.txt").decode("utf-8")
         for _label, url in mirrorspec.DONATION_LINKS:
             self.assertIn(url, donate)
+        self.assertIn("Install the driver first", readme)
+        self.assertIn("Reboot the PC", readme)
+        self.assertIn("flash_tool.exe", readme)
+        self.assertIn("legacy-windows.html", readme)
+
+    def test_flat_windows_legacy_tool_is_normalized_and_driver_is_packed(self):
+        # Upstream flash_tool_windows.zip is flat; the package must still put
+        # the tool, firmware and driver under the folder the guide names.
+        tool_only = self.tmp / "flat-flash-tool.zip"
+        write_zip(
+            tool_only,
+            [
+                ("flash_tool.exe", b"tool", FILE_MODE),
+                ("MTK_AllInOne_DA.bin", b"da", FILE_MODE),
+                ("Driver/Download.url", b"driver link", FILE_MODE),
+                ("history.ini", b"[old]\n", FILE_MODE),
+            ],
+        )
+        driver = self.tmp / "1.Install.Driver.First.and.Reboot.PC.exe"
+        driver.write_bytes(b"driver installer")
+        out = self.tmp / "flat-windows-legacy.zip"
+        build_portable_package(
+            tool_only,
+            inspect_firmware(self.firmware),
+            self.cfg.platform("windows-legacy"),
+            out,
+            self.ini,
+            "Original Software",
+            "3.1.2",
+            "rom.zip",
+            driver_path=driver,
+        )
+        names = names_of(out)
+        self.assertIn("SP_Flash_Tool/flash_tool.exe", names)
+        self.assertIn("SP_Flash_Tool/MTK_AllInOne_DA.bin", names)
+        self.assertIn("SP_Flash_Tool/MT6572_Android_scatter.txt", names)
+        self.assertIn(
+            "Driver/1.Install.Driver.First.and.Reboot.PC.exe", names
+        )
+        self.assertNotIn("flash_tool.exe", names)
+        with zipfile.ZipFile(out) as archive:
+            readme = archive.read("README.txt").decode("utf-8")
+        self.assertIn("Driver folder", readme)
+        self.assertIn("SP_Flash_Tool", readme)
+
+    def test_versioned_linux_legacy_tool_is_normalized(self):
+        tool_only = self.tmp / "versioned-flash-tool.zip"
+        write_zip(
+            tool_only,
+            [
+                ("SP_Flash_Tool_v5.2032_Linux/", b"", DIR_MODE),
+                ("SP_Flash_Tool_v5.2032_Linux/flash_tool", b"tool", FILE_MODE),
+                ("SP_Flash_Tool_v5.2032_Linux/MTK_AllInOne_DA.bin", b"da", FILE_MODE),
+                ("SP_Flash_Tool_v5.2032_Linux/99-ttyacms.rules", b"rules", FILE_MODE),
+            ],
+        )
+        out = self.tmp / "versioned-linux-legacy.zip"
+        build_portable_package(
+            tool_only,
+            inspect_firmware(self.firmware),
+            self.cfg.platform("linux-legacy"),
+            out,
+            self.ini,
+            "Original Software",
+            "3.1.2",
+            "rom.zip",
+        )
+        names = names_of(out)
+        self.assertIn("SP_Flash_Tool/flash_tool", names)
+        self.assertIn("SP_Flash_Tool/99-ttyacms.rules", names)
+        self.assertIn("SP_Flash_Tool/MT6572_Android_scatter.txt", names)
+        self.assertFalse(
+            any(name.startswith("SP_Flash_Tool_v5.2032_Linux/") for name in names)
+        )
+
+    def test_linux_legacy_package_uses_the_32_bit_tool_guide(self):
+        # 32-bit Linux cannot run the AppImage, so the same flash-tool-only
+        # archive is packed beside the firmware and the guide names the 32-bit
+        # runtime libraries the tool needs.
+        tool_only = self.tmp / "flash-tool-linux.zip"
+        write_zip(
+            tool_only,
+            [
+                ("SP_Flash_Tool/", b"", DIR_MODE),
+                ("SP_Flash_Tool/flash_tool", b"tool", FILE_MODE),
+                ("SP_Flash_Tool/MTK_AllInOne_DA.bin", b"da", FILE_MODE),
+                ("Drivers/", b"", DIR_MODE),
+                ("Drivers/install.sh", b"#!/bin/sh\n", FILE_MODE),
+            ],
+        )
+        out = self.tmp / "rom-linux-legacy.zip"
+        result = build_portable_package(
+            tool_only,
+            inspect_firmware(self.firmware),
+            self.cfg.platform("linux-legacy"),
+            out,
+            self.ini,
+            "Original Software",
+            "3.1.2",
+            "rom.zip",
+            target_model="Y1",
+            target_type="Type A",
+        )
+        self.assertEqual(result.platform, "linux-legacy")
+        names = names_of(out)
+        self.assertIn("SP_Flash_Tool/flash_tool", names)
+        self.assertIn("SP_Flash_Tool/README.txt", names)
+        self.assertIn("Drivers/install.sh", names)
+        with zipfile.ZipFile(out) as archive:
+            readme = archive.read("README.txt").decode("utf-8")
+        self.assertIn("./flash_tool", readme)
+        self.assertIn("32-bit", readme)
+        self.assertIn("Y1 Type A", readme)
+        self.assertIn("legacy-linux-32.html", readme)
 
     def test_windows_package_has_no_donate_note(self):
         out = self.tmp / "rom-windows.zip"

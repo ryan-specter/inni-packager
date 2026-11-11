@@ -17,7 +17,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from xml.etree import ElementTree
 
+import repos as repo_fallback
+
 MANIFEST_URL = "https://innioasis.app/slidia_manifest.xml"
+MANIFEST_URLS = tuple(repo_fallback.manifest_urls())
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SAFE_NAME = re.compile(r"[^a-z0-9._-]+")
 _COMMENT_RE = re.compile(r"<!--(.*?)-->", re.DOTALL)
@@ -74,16 +77,37 @@ class Product:
         return self.source_repo.split("/", 1)[-1].replace("-", " ").title()
 
 
-def fetch_manifest(location: str = MANIFEST_URL, timeout: int = 45) -> str:
-    """Read a manifest URL or local path."""
+def fetch_manifest(location: Optional[str] = None, timeout: int = 45) -> str:
+    """Read the manifest from GitHub first, then the site, then a local path.
 
-    if location.startswith(("https://", "http://")):
-        request = urllib.request.Request(
-            location, headers={"User-Agent": "inni-packager/1.0"}
-        )
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read().decode("utf-8")
-    return Path(location).read_text(encoding="utf-8")
+    GitHub is the primary copy so a healthy site outage does not stop the
+    packager.  The repository is tried under both owner spellings, followed by
+    ``innioasis.app``, exactly matching the browser's order.
+    """
+
+    if location is None or location == MANIFEST_URL:
+        locations: Sequence[str] = MANIFEST_URLS
+    else:
+        locations = (location,)
+    last_error: Optional[Exception] = None
+    for candidate in locations:
+        if candidate.startswith(("https://", "http://")):
+            request = urllib.request.Request(
+                candidate, headers={"User-Agent": "inni-packager/1.0"}
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    return response.read().decode("utf-8")
+            except (OSError, ValueError) as exc:
+                last_error = exc
+                continue
+        try:
+            return Path(candidate).read_text(encoding="utf-8")
+        except OSError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise OSError("no manifest location configured")
 
 
 def _package_from_attributes(attributes: Mapping[str, str]) -> Optional[ManifestPackage]:
@@ -158,7 +182,7 @@ def parse_manifest(
 
 
 def post_installs_for_source(
-    source_repo: str, location: str = MANIFEST_URL
+    source_repo: str, location: Optional[str] = None
 ) -> List[str]:
     """Return the manifest's post-install links for one source repository."""
 
@@ -305,7 +329,11 @@ def caller_workflow(
 
 on:
   schedule:
-    - cron: "41 3,9,15,21 * * *"
+    # Hourly fallback.  The central watcher dispatches this workflow as soon
+    # as a source release, seed release or manifest row changes.
+    - cron: "17 * * * *"
+  repository_dispatch:
+    types: [firmware-release, portable-seed]
   workflow_dispatch:
     inputs:
       tags:

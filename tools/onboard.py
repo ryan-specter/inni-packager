@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import html
 import json
 import os
@@ -40,6 +41,14 @@ SITE_MANIFEST = "slidia_manifest.xml"
 PACKAGE_TAG_RE = re.compile(r"<package\b[^>]*?/>")
 ATTRIBUTE_RE = re.compile(r'([A-Za-z_][\w:.-]*)\s*=\s*"([^"]*)"')
 PORTABLE_ATTR_RE = re.compile(r"(\bportable_zips\s*=\s*)([\"'])(.*?)\2")
+
+# The portable application seeds.  A change to either repository's release
+# assets means every mirror must rebuild against the new seed.
+DEFAULT_SEED_REPOS = (
+    "y1-community/updater-ce-neo",
+    "y1-community/Innioasis-Updater",
+)
+STATE_VERSION = 1
 
 
 def parse_csv(value: Optional[str]) -> List[str]:
@@ -68,6 +77,7 @@ def source_info(gh: GitHub, product: Product, check: bool) -> Dict[str, Any]:
     info: Dict[str, Any] = {
         "release_count": None,
         "zip_assets": [],
+        "release_digest": "",
         "source_error": "",
         "source_missing": False,
     }
@@ -83,6 +93,22 @@ def source_info(gh: GitHub, product: Product, check: bool) -> Dict[str, Any]:
         info["source_error"] = str(exc)
         return info
 
+    if not releases:
+        # GitHub.list_releases returns [] when both the primary and fallback
+        # spellings are 404.  Keep that useful for the other packager paths,
+        # but do not mistake a deleted source repository for an empty one.
+        try:
+            source_exists = gh.get_repo(product.source_repo) is not None
+        except (GitHubError, ApiError) as exc:
+            info["source_error"] = str(exc)
+            return info
+        if not source_exists:
+            info["source_error"] = (
+                f"source repository not found: {product.source_repo}"
+            )
+            info["source_missing"] = True
+            return info
+
     assets = sorted(
         {
             str(asset.get("name") or "")
@@ -93,6 +119,7 @@ def source_info(gh: GitHub, product: Product, check: bool) -> Dict[str, Any]:
     )
     info["release_count"] = len(releases)
     info["zip_assets"] = assets
+    info["release_digest"] = release_digest(releases)
     return info
 
 
@@ -100,6 +127,126 @@ def _put_action(existing: bool, changed: bool) -> str:
     if changed:
         return "updated" if existing else "created"
     return "unchanged"
+
+
+def release_digest(releases: Sequence[Mapping[str, Any]]) -> str:
+    """Hash the release tags and asset metadata that affect package builds.
+
+    ``updated_at`` and ``digest`` catch an asset replaced under the same name;
+    the tag and asset name catch a new release or an added file.  The release
+    body is deliberately excluded: editing notes does not require a rebuild.
+    """
+
+    rows: List[Dict[str, Any]] = []
+    for release in releases:
+        assets = sorted(
+            (
+                {
+                    "name": str(asset.get("name") or ""),
+                    "size": int(asset.get("size") or 0),
+                    "id": asset.get("id"),
+                    "digest": str(asset.get("digest") or ""),
+                    "updated_at": str(asset.get("updated_at") or ""),
+                    "state": str(asset.get("state") or ""),
+                }
+                for asset in release.get("assets") or []
+            ),
+            key=lambda asset: asset["name"],
+        )
+        rows.append(
+            {
+                "tag": str(release.get("tag_name") or ""),
+                "name": str(release.get("name") or ""),
+                "draft": bool(release.get("draft")),
+                "prerelease": bool(release.get("prerelease")),
+                "published_at": str(release.get("published_at") or ""),
+                "assets": assets,
+            }
+        )
+    rows.sort(key=lambda row: row["tag"])
+    return hashlib.sha256(
+        json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _package_signature_rows(
+    packages: Sequence[ManifestPackage],
+) -> List[Sequence[str]]:
+    return sorted(
+        (
+            package.name,
+            package.repo.lower(),
+            package.device.upper(),
+            package.package_type,
+            package.post_install,
+            package.derivative,
+        )
+        for package in packages
+    )
+
+
+def _signature(rows: Sequence[Sequence[str]]) -> str:
+    return hashlib.sha256(
+        json.dumps(rows, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def manifest_signature(packages: Sequence[ManifestPackage]) -> str:
+    """Hash the manifest rows that determine which products are built.
+
+    ``portable_zips`` is intentionally not included: onboarding adds or
+    refreshes that attribute itself, and doing so must not make the next watch
+    run rebuild every mirror again.
+    """
+
+    return _signature(_package_signature_rows(packages))
+
+
+def product_signature(product: Product) -> str:
+    """Hash only the rows belonging to one mirror product."""
+
+    return _signature(_package_signature_rows(product.packages))
+
+
+def load_state(path: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not path:
+        return None
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def write_state(path: Path, state: Mapping[str, Any]) -> bool:
+    """Write the watch state, returning False when it is already current."""
+
+    text = json.dumps(state, indent=2, sort_keys=True) + "\n"
+    if path.is_file():
+        try:
+            if path.read_text(encoding="utf-8") == text:
+                return False
+        except OSError:
+            pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
+def seed_release_digests(
+    gh: GitHub, repos: Sequence[str], log=print
+) -> Dict[str, str]:
+    """Fingerprint the portable-app seed repositories."""
+
+    result: Dict[str, str] = {}
+    for repo in repos:
+        try:
+            releases = gh.list_releases(repo)
+        except (GitHubError, ApiError) as exc:
+            log(f"  warning: could not watch portable seed {repo}: {exc}")
+            continue
+        result[repo.lower()] = release_digest(releases)
+    return result
 
 
 def set_portable_zips(text: str, mirrors: Mapping[str, str]) -> tuple[str, int]:
@@ -317,6 +464,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--apply", action="store_true", help="create repositories and seed files")
     parser.add_argument("--trigger", action="store_true", help="dispatch each mirror workflow")
     parser.add_argument(
+        "--trigger-changed",
+        action="store_true",
+        help="dispatch only mirrors whose source, seed or manifest changed",
+    )
+    parser.add_argument(
+        "--state",
+        default="",
+        help="persist the watched release/manifest state at this path",
+    )
+    parser.add_argument(
+        "--seed-repo",
+        action="append",
+        default=[],
+        help="portable app seed repository to watch (repeatable)",
+    )
+    parser.add_argument(
         "--update-config",
         action="store_true",
         help="overwrite existing mirror.config.json files",
@@ -352,13 +515,40 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
 
     gh = GitHub()
+    state_path = Path(args.state) if args.state else None
+    previous_state = load_state(args.state) if state_path else None
+    manifest_sig = manifest_signature(packages)
+    seed_repos = args.seed_repo or list(DEFAULT_SEED_REPOS)
+    seed_digests = (
+        seed_release_digests(gh, seed_repos, log=print)
+        if state_path and (args.apply or args.trigger_changed)
+        else {}
+    )
+    previous_seeds = (previous_state or {}).get("seeds") or {}
+    seed_changed = bool(previous_state) and any(
+        digest != previous_seeds.get(repo)
+        for repo, digest in seed_digests.items()
+    )
+    manifest_changed = bool(previous_state) and previous_state.get("manifest") != manifest_sig
+    first_run = previous_state is None
+    previous_sources = (previous_state or {}).get("sources") or {}
+    previous_products = (previous_state or {}).get("products") or {}
+
     report: Dict[str, Any] = {
+        "watch": {
+            "state": str(state_path) if state_path else "",
+            "first_run": first_run,
+            "manifest_changed": manifest_changed,
+            "seed_changed": seed_changed,
+            "seeds": seed_digests,
+        },
         "manifest": args.manifest,
         "org": args.org,
         "packager_repo": args.packager_repo,
         "packager_ref": args.packager_ref,
         "apply": args.apply,
         "trigger": args.trigger,
+        "trigger_changed": args.trigger_changed,
         "site_manifest": None,
         "products": [],
         "failures": [],
@@ -368,12 +558,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for product in products:
         print(f"{product.source_repo} -> {product.mirror_repo}")
         info = source_info(gh, product, not args.no_check_releases)
+        current_product_sig = product_signature(product)
         entry: Dict[str, Any] = {
             "source_repo": product.source_repo,
             "mirror_repo": product.mirror_repo,
             "software_name": product.software_name,
             "devices": product.devices,
             "post_installs": product.post_installs,
+            "product_signature": current_product_sig,
             **info,
         }
         if args.apply:
@@ -381,13 +573,44 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 entry["action"] = "skipped"
                 entry["error"] = f"source unavailable: {info['source_error']}"
             else:
+                source_changed = bool(previous_state) and bool(
+                    info.get("release_digest")
+                ) and previous_sources.get(
+                    product.source_repo.lower(), ""
+                ) != info.get("release_digest")
+                product_changed = bool(previous_state) and previous_products.get(
+                    product.source_repo.lower()
+                ) != current_product_sig
+                mirror_missing = (
+                    args.trigger_changed
+                    and gh.get_repo(product.mirror_repo) is None
+                )
+                trigger_this = args.trigger or (
+                    args.trigger_changed
+                    and (
+                        first_run
+                        or product_changed
+                        or seed_changed
+                        or source_changed
+                        or mirror_missing
+                    )
+                )
+                entry["trigger_reason"] = (
+                    "manual" if args.trigger else
+                    "first-run" if args.trigger_changed and first_run else
+                    "manifest" if args.trigger_changed and product_changed else
+                    "seed" if args.trigger_changed and seed_changed else
+                    "source" if args.trigger_changed and source_changed else
+                    "new-mirror" if args.trigger_changed and mirror_missing else
+                    ""
+                )
                 try:
                     entry.update(
                         apply_product(
                             gh,
                             product,
                             update_config=args.update_config,
-                            trigger=args.trigger,
+                            trigger=trigger_this,
                             packager_repo=args.packager_repo,
                             packager_ref=args.packager_ref,
                             org=args.org,
@@ -398,6 +621,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     entry["error"] = str(exc)
                     report["failures"].append(
                         {"mirror_repo": product.mirror_repo, "error": str(exc)}
+                    )
+                if entry.get("trigger_error"):
+                    report["failures"].append(
+                        {
+                            "mirror_repo": product.mirror_repo,
+                            "error": "trigger: " + str(entry["trigger_error"]),
+                        }
                     )
         else:
             entry["mirror_exists"] = gh.get_repo(product.mirror_repo) is not None
@@ -425,6 +655,35 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 {"mirror_repo": args.site_repo, "error": str(exc)}
             )
             print(f"error: could not update the site manifest: {exc}")
+
+    if state_path and args.apply and not only and not skip and not report["failures"]:
+        sources: Dict[str, str] = {}
+        for entry in report["products"]:
+            digest = str(entry.get("release_digest") or "")
+            key = str(entry.get("source_repo") or "").lower()
+            if digest:
+                sources[key] = digest
+            elif previous_sources.get(key):
+                sources[key] = previous_sources[key]
+        seeds: Dict[str, str] = {}
+        for repo in seed_repos:
+            key = repo.lower()
+            if key in seed_digests:
+                seeds[key] = seed_digests[key]
+            elif previous_seeds.get(key):
+                seeds[key] = previous_seeds[key]
+        product_state = {
+            product.source_repo.lower(): product_signature(product)
+            for product in products
+        }
+        new_state = {
+            "version": STATE_VERSION,
+            "manifest": manifest_sig,
+            "products": product_state,
+            "sources": sources,
+            "seeds": seeds,
+        }
+        report["watch"]["state_written"] = write_state(state_path, new_state)
 
     write_report(report, Path(args.out))
     print(f"wrote {args.out}")

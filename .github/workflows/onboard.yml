@@ -1,8 +1,12 @@
-name: Onboard y1-community firmware mirrors
+name: Onboard and watch y1-community firmware mirrors
 
+# GitHub does not deliver a release event from a source repository to this
+# repository.  Poll frequently instead, then dispatch only the affected mirror
+# workflows.  The mirror repositories keep their own hourly schedule as a
+# fallback if this watcher is delayed or disabled.
 on:
   schedule:
-    - cron: "23 4 * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       apply:
@@ -11,10 +15,15 @@ on:
         type: boolean
         default: false
       trigger:
-        description: "Dispatch each mirror workflow after seeding"
+        description: "Dispatch every selected mirror workflow (manual full rebuild)"
         required: false
         type: boolean
         default: false
+      trigger_changed:
+        description: "Dispatch only mirrors whose source, seed or manifest changed"
+        required: false
+        type: boolean
+        default: true
       update_config:
         description: "Overwrite existing mirror.config.json files"
         required: false
@@ -45,7 +54,11 @@ on:
         default: "y1-community"
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: firmware-mirror-onboarding
+  cancel-in-progress: false
 
 jobs:
   onboard:
@@ -56,6 +69,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          # The repository's default GITHUB_TOKEN policy is read-only.  The
+          # token used for onboarding already has contents write and is the
+          # credential that commits the watch state and mirror workflows.
+          token: ${{ secrets.MIRROR_TOKEN || github.token }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -70,7 +87,9 @@ jobs:
           GH_TOKEN: ${{ secrets.MIRROR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.MIRROR_TOKEN }}
           APPLY: ${{ github.event_name == 'schedule' || inputs.apply }}
-          TRIGGER: ${{ github.event_name == 'schedule' || inputs.trigger }}
+          TRIGGER: ${{ inputs.trigger }}
+          TRIGGER_CHANGED: ${{ github.event_name == 'schedule' || inputs.trigger_changed }}
+          STATE: .github/mirror-watch-state.json
           UPDATE_CONFIG: ${{ inputs.update_config }}
           ONLY: ${{ inputs.only }}
           SKIP: ${{ inputs.skip }}
@@ -83,16 +102,36 @@ jobs:
           if [ -n "${ONLY:-}" ]; then args+=(--only "$ONLY"); fi
           if [ -n "${SKIP:-}" ]; then args+=(--skip "$SKIP"); fi
           if [ "${INCLUDE_MISSING_SOURCES:-false}" = "true" ]; then args+=(--include-missing-sources); fi
-          if [ "${APPLY:-false}" = "true" ]; then args+=(--apply); fi
+          if [ "${APPLY:-false}" = "true" ]; then args+=(--apply --state "$STATE"); fi
           if [ "${TRIGGER:-false}" = "true" ]; then args+=(--trigger); fi
+          if [ "${TRIGGER_CHANGED:-false}" = "true" ]; then args+=(--trigger-changed); fi
           if [ "${UPDATE_CONFIG:-false}" = "true" ]; then args+=(--update-config); fi
           python tools/onboard.py "${args[@]}"
+
+      - name: Persist the mirror watch state
+        if: always() && (github.event_name == 'schedule' || inputs.apply)
+        run: |
+          set -euo pipefail
+          state=".github/mirror-watch-state.json"
+          if [ ! -f "$state" ]; then
+            exit 0
+          fi
+          git add "$state"
+          if git diff --cached --quiet -- "$state"; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update firmware mirror watch state"
+          git push || { git pull --rebase --autostash && git push; }
 
       - name: Upload the onboarding report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: onboarding-report
-          path: onboarding-report.json
+          path: |
+            onboarding-report.json
+            .github/mirror-watch-state.json
           if-no-files-found: ignore
           retention-days: 30

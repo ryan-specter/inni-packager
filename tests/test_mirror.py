@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +12,17 @@ sys.path.insert(0, str(ROOT / "tools"))
 import mirrorspec  # noqa: E402
 import portable_mirror as pm  # noqa: E402
 import release_notes  # noqa: E402
+
+DIR_MODE = (0o40755 << 16) | 0x10
+FILE_MODE = 0o100644 << 16
+
+
+def make_zip(path, entries):
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data, mode in entries:
+            info = zipfile.ZipInfo(name)
+            info.external_attr = DIR_MODE if name.endswith("/") else mode
+            archive.writestr(info, data)
 
 
 def asset(name, size=1, ident=1):
@@ -28,6 +40,95 @@ class FakeGitHub:
 
     def list_releases(self, repo):
         return self.releases
+
+
+class BuildForReleaseTests(unittest.TestCase):
+    def test_original_zip_is_repacked_and_recorded(self):
+        cfg = mirrorspec.load_config(
+            str(ROOT / "mirror.config.json"),
+            mirror_repo="owner/mirror",
+            platforms=["windows"],
+            environ={},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            firmware = work / "rom.zip"
+            make_zip(
+                firmware,
+                [
+                    ("MT6572_Android_scatter.txt", b"standard", FILE_MODE),
+                    ("preserve_data_scatter.txt", b"stray", FILE_MODE),
+                    ("boot.img", b"firmware payload " * 2000, FILE_MODE),
+                ],
+            )
+            tool = work / "UpdaterCE-Windows-Portable.zip"
+            make_zip(
+                tool,
+                [
+                    ("SP_Flash_Tool/", b"", DIR_MODE),
+                    ("SP_Flash_Tool/flash_tool.exe", b"tool", FILE_MODE),
+                    ("SP_Flash_Tool/MTK_AllInOne_DA.bin", b"da", FILE_MODE),
+                    ("SP_Flash_Tool/history.ini", b"[old]\n", FILE_MODE),
+                    ("InnioasisUpdater", b"app", FILE_MODE),
+                ],
+            )
+            release = {
+                "tag_name": "1.0",
+                "name": "Test 1.0",
+                "body": "notes",
+                "assets": [
+                    {
+                        "name": "rom.zip",
+                        "size": firmware.stat().st_size,
+                        "id": 1,
+                        "browser_download_url": "https://example.invalid/rom.zip",
+                    }
+                ],
+            }
+
+            class FakeGH:
+                def download(self, repo, asset, dest, log=None):
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(firmware.read_bytes())
+                    return dest
+
+            updater = {
+                "windows": {
+                    "repo": "owner/updater",
+                    "tag": "2.0",
+                    "name": tool.name,
+                    "size": tool.stat().st_size,
+                    "id": 2,
+                    "url": "https://example.invalid/tool.zip",
+                }
+            }
+            result = pm.build_for_release(
+                cfg,
+                release,
+                None,
+                None,
+                FakeGH(),
+                updater,
+                None,
+                lambda key: tool,
+                work,
+                quiet,
+                dry_run=True,
+            )
+            self.assertEqual(result["action"], "built-dry-run")
+            original = work / "1.0" / "original" / "out" / "rom.zip"
+            self.assertTrue(original.is_file())
+            with zipfile.ZipFile(original) as archive:
+                names = archive.namelist()
+            self.assertIn("MT6572_Android_scatter.txt", names)
+            self.assertNotIn("preserve_data_scatter.txt", names)
+            self.assertLessEqual(original.stat().st_size, firmware.stat().st_size)
+            block = result["block"]
+            self.assertEqual(block["original_assets"], ["rom.zip"])
+            self.assertEqual(
+                block["original_asset_sizes"]["rom.zip"],
+                original.stat().st_size,
+            )
 
 
 def quiet(_message):
@@ -148,6 +249,40 @@ class IndexTests(unittest.TestCase):
             pm.block_is_current(self.cfg, release, existing, block, "fp")
         )
 
+    def test_block_is_current_checks_original_assets(self):
+        block = {
+            "v": mirrorspec.BUILDER_VERSION,
+            "fingerprint": "fp",
+            "assets": [{"name": "rom-windows.zip", "size": 10}],
+            "button_assets": [{"name": "release-button-updater.svg", "size": 10}],
+            "original_assets": ["rom.zip"],
+            "original_asset_sizes": {"rom.zip": 6},
+        }
+        existing = {
+            "body": "notes",
+            "assets": [
+                {"name": "rom-windows.zip", "size": 10, "state": "uploaded"},
+                {
+                    "name": "release-button-updater.svg",
+                    "size": 10,
+                    "state": "uploaded",
+                },
+                {"name": "rom.zip", "size": 6, "state": "uploaded"},
+            ],
+        }
+        release = {"tag_name": "3.1.2"}
+        self.assertTrue(
+            pm.block_is_current(self.cfg, release, existing, block, "fp")
+        )
+        existing["assets"][2]["size"] = 7
+        self.assertFalse(
+            pm.block_is_current(self.cfg, release, existing, block, "fp")
+        )
+        existing["assets"].pop()
+        self.assertFalse(
+            pm.block_is_current(self.cfg, release, existing, block, "fp")
+        )
+
     def test_index_entry_url_and_title(self):
         block = {
             "assets": [
@@ -204,6 +339,75 @@ class IndexTests(unittest.TestCase):
         self.assertNotEqual(
             mirrorspec.release_fingerprint(self.cfg, release, first),
             mirrorspec.release_fingerprint(self.cfg, release, second),
+        )
+
+    def test_fingerprint_changes_when_a_firmware_asset_updates(self):
+        updater = {
+            "windows": {"tag": "2.6", "name": "w.zip", "size": 1, "id": 1}
+        }
+        first = {
+            "tag_name": "3.1.2",
+            "assets": [{"name": "rom.zip", "size": 1, "id": 1}],
+        }
+        second = {
+            "tag_name": "3.1.2",
+            "assets": [{"name": "rom.zip", "size": 2, "id": 2}],
+        }
+        self.assertNotEqual(
+            mirrorspec.release_fingerprint(self.cfg, first, updater),
+            mirrorspec.release_fingerprint(self.cfg, second, updater),
+        )
+
+    def test_review_uses_recorded_original_size(self):
+        release = {
+            "tag_name": "3.1.2",
+            "assets": [
+                {
+                    "name": "rom.zip",
+                    "size": 100,
+                    "id": 1,
+                    "digest": "sha256:source-bytes",
+                }
+            ],
+        }
+        updater = {
+            "windows": {
+                "tag": "2.6",
+                "name": "UpdaterCE-Windows-Portable.zip",
+                "size": 10,
+                "id": 2,
+            }
+        }
+        block = {
+            "v": mirrorspec.BUILDER_VERSION,
+            "fingerprint": mirrorspec.release_fingerprint(
+                self.cfg, release, updater
+            ),
+            "assets": [{"name": "rom-windows.zip", "size": 42}],
+            "button_assets": [{"name": "release-button-updater.svg", "size": 1}],
+            "original_assets": ["rom.zip"],
+            "original_asset_sizes": {"rom.zip": 60},
+        }
+        existing = {
+            "body": mirrorspec.render_notes(release, block),
+            "assets": [
+                {"name": "rom-windows.zip", "size": 42, "state": "uploaded"},
+                {
+                    "name": "release-button-updater.svg",
+                    "size": 1,
+                    "state": "uploaded",
+                },
+                {"name": "rom.zip", "size": 60, "state": "uploaded"},
+            ],
+        }
+        self.assertEqual(
+            pm.review_release(self.cfg, release, existing, updater)["state"],
+            "current",
+        )
+        existing["assets"][2]["size"] = 61
+        self.assertEqual(
+            pm.review_release(self.cfg, release, existing, updater)["state"],
+            "needs-build",
         )
 
     def test_make_index_merges_and_removes(self):
@@ -378,7 +582,6 @@ class ShardTests(unittest.TestCase):
         releases = [{"tag_name": f"t{index}"} for index in range(11)]
         seen = []
         for index in range(3):
-
             class Args:
                 tags = ""
                 limit = None

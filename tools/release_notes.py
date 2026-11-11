@@ -22,6 +22,7 @@ from urllib.parse import quote, urlencode
 from mirrorspec import MirrorConfig, strip_block
 
 INSTALL_GUIDE_BASE = "https://innioasis.app/guide.html"
+FIRMWARE_PAGE_BASE = "https://innioasis.app/firmware.html"
 BUTTON_PREFIX = "release-button-"
 REPOSITORY_BUTTON_DIR = ".mirror-assets"
 BUTTON_WIDTH = 520
@@ -36,10 +37,14 @@ BUTTONS: "OrderedDict[str, Tuple[str, str]]" = OrderedDict(
         ("windows-arm64", ("Download .zip for Windows arm64", "portable package")),
         (
             "windows-legacy",
-            ("Download .zip for Windows XP/7/8", "32/64-bit · SP Flash Tool"),
+            ("Download .zip for Windows 7", "XP/7/8.1 · SP Flash Tool guide"),
         ),
         ("linux", ("Download .zip for Linux", "x86-64 · portable package")),
         ("linux-arm64", ("Download .zip for Linux arm64", "portable package")),
+        (
+            "linux-legacy",
+            ("Download .zip for 32-bit Linux", "pre-AppImage · SP Flash Tool"),
+        ),
         (
             "macos",
             ("Download .zip for macOS 12+", "Intel + Apple silicon"),
@@ -201,13 +206,29 @@ def _device_label(
     return model, target_type
 
 
-def _asset_url(cfg: MirrorConfig, tag: str, name: str) -> str:
-    if not cfg.mirror_repo:
-        return "#"
-    return (
-        f"https://github.com/{cfg.mirror_repo}/releases/download/"
-        f"{quote(tag, safe='')}/{quote(name, safe='')}"
-    )
+def firmware_page_url(
+    cfg: MirrorConfig,
+    release: Mapping[str, Any],
+    item: Mapping[str, Any],
+    platform: str,
+) -> str:
+    """Link a release-note download button to the site's firmware browser.
+
+    The page filters its catalogue to this exact release and preselects the
+    package for the requested platform.  Linking there instead of straight at
+    the asset keeps one download entry point, and the visitor can still reveal
+    every other version from that page.
+    """
+
+    params = [
+        ("repo", cfg.source_repo),
+        ("tag", str(release.get("tag_name") or release.get("tag") or "")),
+        ("asset", str(item.get("source_asset") or "")),
+        ("platform", platform),
+        ("mirror", cfg.mirror_repo),
+    ]
+    query = urlencode([(key, value) for key, value in params if value])
+    return f"{FIRMWARE_PAGE_BASE}?{query}"
 
 
 def _image_url(cfg: MirrorConfig, tag: str, name: str) -> str:
@@ -222,13 +243,14 @@ def _attr(value: str) -> str:
 
 def _download_button(
     cfg: MirrorConfig,
-    tag: str,
+    release: Mapping[str, Any],
     item: Mapping[str, Any],
     platform: str,
     device_label: str,
 ) -> str:
     title, subtitle = BUTTONS[platform]
-    href = _asset_url(cfg, tag, str(item.get("name") or ""))
+    href = firmware_page_url(cfg, release, item, platform)
+    tag = str(release.get("tag_name") or release.get("tag") or "")
     image = _image_url(cfg, tag, button_filename(platform))
     alt = f"{title} for {device_label} - {subtitle}"
     return (
@@ -293,7 +315,7 @@ def render_header(
                 lines.append(
                     "  "
                     + _download_button(
-                        cfg, tag, by_platform[platform], platform, device_label
+                        cfg, release, by_platform[platform], platform, device_label
                     )
                 )
             lines.append("</p>")

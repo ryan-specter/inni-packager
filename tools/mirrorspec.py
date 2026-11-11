@@ -47,7 +47,9 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 #     only standard *_Android_scatter.txt layouts when several are present.
 # 13: Windows XP/7/8 packages are built from the flash-tool-only asset and
 #     carry donate.txt, for computers that cannot run Updater CE.
-BUILDER_VERSION = 13
+# 14: 32-bit Linux gets the same flash-tool-only package, and every legacy
+#     package carries the driver-install, reboot, Download, connect guide.
+BUILDER_VERSION = 15
 
 DEFAULT_BRANCH = "main"
 DEFAULT_TITLE_PREFIX = "Portable Flashing Package: "
@@ -63,6 +65,7 @@ KNOWN_SUFFIXES = (
     "-windows-arm64.zip",
     "-linux.zip",
     "-linux-arm64.zip",
+    "-linux-legacy.zip",
     "-macos.zip",
 )
 
@@ -83,6 +86,7 @@ DEFAULT_FIRMWARE_EXCLUDES = (
     "*-windows-arm64.zip",
     "*-linux.zip",
     "*-linux-arm64.zip",
+    "*-linux-legacy.zip",
     "*-macos.zip",
     "*portable*.zip",
     "*source*.zip",
@@ -126,11 +130,18 @@ DEFAULT_PLATFORMS: Dict[str, Dict[str, Any]] = {
     # firmware is packed beside that tool instead of the app.  Optional until
     # the first flash-tool-only asset is published upstream.
     "windows-legacy": {
-        "updater_asset": "Innioasis-SP-Flash-Tool-windows-legacy.zip",
-        # Older runs of the updater build published the same tool under a
-        # plainer name.  Either asset is accepted so a mirror never fails just
-        # because the upstream name changed.
-        "updater_asset_alternates": ["SP_Flash_Tool-Windows.zip"],
+        # The flash-tool-only archives live on Innioasis-Updater's
+        # ``flash_tool`` release.  Current builds publish them as lowercase
+        # ``flash_tool_windows.zip`` / ``flash_tool_linux.zip``; the older
+        # capitalised names stay accepted so a mirror never fails just because
+        # upstream renamed the asset again.
+        "updater_asset": "flash_tool_windows.zip",
+        "updater_asset_alternates": [
+            "SP_Flash_Tool-Windows.zip",
+            "Innioasis-SP-Flash-Tool-windows-legacy.zip",
+        ],
+        "driver_asset": "1.Install.Driver.First.and.Reboot.PC.exe",
+        "updater_repo": "y1-community/innioasis-updater",
         "suffix": "-windows-legacy.zip",
         "layout": "sp_flash_tool",
         "os": "windows",
@@ -152,6 +163,22 @@ DEFAULT_PLATFORMS: Dict[str, Dict[str, Any]] = {
         "os": "linux",
         "arch": "arm64",
         "optional": True,
+    },
+    # 32-bit Linux cannot run the AppImage/portable app either.  The same
+    # flash-tool-only archive used for old Windows is published for Linux, so
+    # it is repacked beside the firmware exactly like the Windows legacy zip.
+    # The platform is x86 (32-bit) on purpose: 64-bit Linux keeps the full
+    # Updater CE package, which also carries the tool.
+    "linux-legacy": {
+        "updater_asset": "flash_tool_linux.zip",
+        "updater_asset_alternates": ["SP_Flash_Tool-Linux.zip"],
+        "updater_repo": "y1-community/innioasis-updater",
+        "suffix": "-linux-legacy.zip",
+        "layout": "sp_flash_tool",
+        "os": "linux",
+        "arch": "x86",
+        "optional": True,
+        "legacy": True,
     },
     "macos": {
         "updater_asset": "Innioasis.Updater.for.Mac.dmg",
@@ -184,6 +211,9 @@ class Platform:
     # Legacy packages wrap the flash tool alone and explain how to support the
     # project, because the Updater CE app cannot run on that computer.
     legacy: bool = False
+    # Extra file shipped in the package beside the tool.  Windows legacy
+    # packages need the separately published USB driver installer.
+    driver_asset: str = ""
     # Other published names for the same upstream asset.
     alt_assets: Tuple[str, ...] = ()
 
@@ -371,6 +401,7 @@ def load_config(
                 pinned_tag=str(base.get("tag") or ""),
                 updater_repo=str(base.get("updater_repo") or ""),
                 legacy=bool(base.get("legacy")),
+                driver_asset=str(base.get("driver_asset") or ""),
                 alt_assets=tuple(a for a in alternates if a != base["updater_asset"]),
             )
         )
@@ -688,6 +719,7 @@ def config_fingerprint(cfg: MirrorConfig) -> str:
                 "pinned": p.pinned_tag,
                 "updater_repo": p.updater_repo,
                 "legacy": p.legacy,
+                "driver_asset": p.driver_asset,
                 "alt_assets": list(p.alt_assets),
             }
             for p in cfg.platforms
@@ -761,6 +793,7 @@ def release_fingerprint(
                 "id": value.get("id"),
                 "digest": value.get("digest"),
                 "updated_at": value.get("updated_at"),
+                "driver": value.get("driver"),
             }
             for key, value in sorted(updater_assets.items())
         },
@@ -816,10 +849,10 @@ def render_notes(
 def legacy_donate_txt(software: str, version: str, firmware_asset: str) -> str:
     """A plain-text note for computers that cannot run Updater CE.
 
-    It is written by every legacy package so a Windows XP/7/8 user still sees
-    where the project can be supported after the install, without opening a
-    browser first.  Every URL is spelled out so it also works when copied to a
-    machine that is not online.
+    It is written by every legacy package so a Windows XP/7/8 or 32-bit Linux
+    user still sees where the project can be supported after the install,
+    without opening a browser first.  Every URL is spelled out so it also works
+    when copied to a machine that is not online.
     """
 
     title = " ".join(part for part in (software, version) if part).strip()
@@ -849,41 +882,32 @@ def legacy_donate_txt(software: str, version: str, firmware_asset: str) -> str:
 
 
 def legacy_readme(
-    software: str, version: str, firmware_asset: str, scatter: str
+    software: str,
+    version: str,
+    firmware_asset: str,
+    scatter: str,
+    platform_key: str = "windows-legacy",
+    model: str = "",
+    target_type: str = "",
 ) -> str:
-    """Quick-start for the SP Flash Tool package on older Windows."""
+    """Quick-start for a flash-tool-only package.
 
-    title = " ".join(part for part in (software, version) if part).strip()
-    lines = [
-        "Innioasis Firmware + SP Flash Tool (Windows XP/7/8, 32-bit and 64-bit)",
-        "=====================================================================",
-        "",
-        f"Firmware: {title or software or 'Innioasis firmware'} ({firmware_asset})",
-        "",
-        "This download is for computers that cannot run Innioasis Updater CE:",
-        "Windows XP, Vista, 7, 8 or 8.1, and 32-bit Windows.",
-        "",
-        "How to install the firmware:",
-        "1. Right-click this zip and choose Extract All. Do not run anything",
-        "   from inside the zip window.",
-        "2. Open the SP_Flash_Tool folder and run flash_tool.exe.",
-        "3. In the Download tab, choose the scatter file that came with this",
-        f"   package ({scatter}).",
-        "4. Leave every partition ticked as the scatter set it, then click",
-        "   Download. When the tool is waiting, power the player fully off and",
-        "   connect it with a USB cable that carries data.",
-        "5. Wait for the green check mark before unplugging anything.",
-        "",
-        "Windows 10 and 11 can use Updater CE instead, which also covers macOS",
-        "and Linux: https://innioasis.app/install/legacy-windows.html",
-        "",
-        "If the player is not detected, install the MediaTek USB driver in the",
-        "Driver folder, restart the PC, and try another USB port.",
-        "",
-        "donate.txt lists the ways to support the projects behind this firmware.",
-        "",
-    ]
-    return "\r\n".join(lines)
+    The text lives in :mod:`install_guides`, which also renders the static
+    guide pages and the link the website uses, so the README and the site can
+    never disagree about the driver/reboot/Download/connect order.
+    """
+
+    from install_guides import render_text
+
+    return render_text(
+        platform_key,
+        software=software,
+        version=version,
+        firmware_asset=firmware_asset,
+        scatter=scatter,
+        model=model,
+        target_type=target_type,
+    )
 
 
 def macos_dmg_readme(

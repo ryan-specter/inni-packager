@@ -6,7 +6,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 import mirrorspec  # noqa: E402
-from stats import STATS_ASSET, build_stats, platform_for_name, prepare_baseline  # noqa: E402
+from stats import (  # noqa: E402
+    STATS_ASSET,
+    build_stats,
+    parse_stats_text,
+    platform_for_name,
+    prepare_baseline,
+)
 
 
 def asset(name, count):
@@ -56,6 +62,12 @@ class StatsTests(unittest.TestCase):
     def test_platform_suffixes(self):
         self.assertEqual(platform_for_name("rom-windows-arm64.zip", None), "windows-arm64")
         self.assertEqual(platform_for_name("rom-linux-arm64.zip", None), "linux-arm64")
+        self.assertEqual(
+            platform_for_name("rom-windows-legacy.zip", None), "windows-legacy"
+        )
+        self.assertEqual(
+            platform_for_name("rom-linux-legacy.zip", None), "linux-legacy"
+        )
         self.assertEqual(platform_for_name("rom-windows.zip", None), "windows")
         self.assertIsNone(platform_for_name("rom.zip", None))
         self.assertEqual(platform_for_name("custom.zip", BLOCK), None)
@@ -133,6 +145,57 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(report.totals["mirror_total_downloads"], 0)
         self.assertEqual(report.totals["source_firmware_downloads"], 1200)
         self.assertIn("no mirror assets yet", report.text)
+
+    def test_parse_stats_text_reads_totals_and_breakdown(self):
+        report = build_stats(
+            cfg(),
+            SOURCE,
+            MIRROR,
+            BLOCK,
+            replacing=False,
+            generated_at="2026-11-03T00:00:00Z",
+        )
+        parsed = parse_stats_text(report.text)
+        self.assertEqual(parsed["mirror"]["rom-windows.zip"], 300)
+        self.assertEqual(parsed["totals"]["combined_download_events"], 1805)
+        self.assertEqual(parsed["breakdown"]["total"], 1805)
+        originals = {item["name"]: item for item in parsed["breakdown"]["originals"]}
+        self.assertEqual(originals["rom.zip"]["combined"], 1600)
+        self.assertEqual(originals["rom_y2.zip"]["combined"], 200)
+
+    def test_previous_stats_keep_cumulative_counters_without_a_block(self):
+        first = build_stats(
+            cfg(),
+            SOURCE,
+            MIRROR,
+            BLOCK,
+            replacing=False,
+            generated_at="2026-11-03T00:00:00Z",
+        )
+        previous = parse_stats_text(first.text)
+        baseline, retired = prepare_baseline(
+            None,
+            [asset("rom-windows.zip", 250), asset("rom.zip", 100), asset("stats.txt", 9)],
+            {"rom-windows.zip", "rom.zip", STATS_ASSET},
+            previous_stats=previous,
+        )
+        self.assertEqual(baseline["rom-windows.zip"], 300)
+        self.assertEqual(baseline["rom.zip"], 100)
+        report = build_stats(
+            cfg(),
+            SOURCE,
+            MIRROR,
+            None,
+            baseline=baseline,
+            retired=retired,
+            replacing=True,
+            expected_names={"rom-windows.zip", "rom.zip", STATS_ASSET},
+            previous_stats=previous,
+            generated_at="2026-11-04T00:00:00Z",
+        )
+        self.assertEqual(report.totals["portable_windows_downloads"], 300)
+        self.assertEqual(report.totals["mirror_retired_downloads"], 5)
+        self.assertEqual(report.totals["combined_download_events"], 1805)
 
 
 if __name__ == "__main__":

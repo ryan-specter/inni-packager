@@ -50,8 +50,8 @@ is never written to a config file or the report.
 
 ## 2. Plan first
 
-Open **Actions → Onboard y1-community firmware mirrors → Run workflow** with
-`apply` off. Or run locally:
+Open **Actions → Onboard and watch y1-community firmware mirrors → Run
+workflow** with `apply` off. Or run locally:
 
 ```bash
 GH_TOKEN=... python tools/onboard.py \
@@ -94,6 +94,10 @@ per-product tuning. Use `update_config: true` only when you want to regenerate
 them. The caller workflow is always brought up to date because it is managed by
 the central repository.
 
+The clean apply also adds or refreshes `portable_zips` on the matching
+`type="img"` rows in `slidia_manifest.xml`. A new firmware is therefore one
+manifest line; onboarding creates the mirror and publishes the attribute.
+
 The repository name is derived from the source repository name, lowercased,
 with `-mirror` appended:
 
@@ -106,12 +110,30 @@ with `-mirror` appended:
 
 If two sources would collide after lowercasing, the owner is prefixed.
 
-## 4. First run
+## 4. Scheduled watching and first run
 
-`trigger` is off by default. Enabling it dispatches `mirror.yml` in every
-selected mirror. That is convenient but can start many large backfills at once
-(the Y2 Linux archive alone has 85 releases). On a first rollout, use `only` or
-leave `trigger` off and run one mirror manually.
+The workflow runs every 15 minutes with `apply` and changed-only triggering.
+It stores `.github/mirror-watch-state.json` after a clean apply and compares:
+
+- source release tags and each asset's name, size, digest and update time;
+- the portable application seed releases in
+  `y1-community/updater-ce-neo` and `y1-community/Innioasis-Updater`;
+- each product's manifest rows, including `post_install` and `derivative`.
+  `portable_zips` is deliberately ignored because onboarding writes it.
+
+On the first run, or whenever the state file is missing, every selected mirror
+is dispatched. After that, a source asset change dispatches only that mirror,
+a manifest row change dispatches only its product, and a seed change
+dispatches every mirror. State is committed by the workflow only when the
+apply had no failures, so a failed dispatch is retried on the next run.
+
+The mirror caller workflows also keep an hourly schedule as a fallback if the
+central watcher is delayed or disabled.
+
+Manual `trigger` is separate and still dispatches `mirror.yml` in every
+selected mirror. That can start many large backfills at once (the Y2 Linux
+archive alone has 85 releases); on a first rollout, use `only` or leave both
+trigger options off and run one mirror manually.
 
 Each mirror's workflow:
 
@@ -153,15 +175,34 @@ Re-running onboarding:
 - refreshes the managed caller workflow;
 - can trigger the mirror again.
 
+The 15-minute watcher normally does this automatically. It dispatches a mirror
+when its source release assets change, and dispatches all mirrors when an
+Updater CE or flash-tool seed changes. No action is needed for a normal
+upstream release.
+
 Changing the central packager code does not require onboarding. Every caller
 uses `@main`; a mirror can pin `packager_ref` in its caller if it needs a
 staged rollout.
+
+New default platforms do need one config refresh. A mirror that owns an
+explicit `platforms` object will not build `linux-legacy` (the 32-bit Linux SP
+Flash Tool package) until that object gains the key. Mirrors without one
+inherit it automatically. To refresh an existing mirror after a packager
+release adds a platform, run onboarding with `--only <product> --apply
+--update-config`, or add the platform to that mirror's config by hand. Leaving
+`--update-config` off keeps any deliberate per-product tuning.
 
 ## 7. Local dry run and report
 
 ```bash
 # Full read-only plan
 GH_TOKEN=... python tools/onboard.py \
+  --out onboarding-report.json
+
+# Watch every product and dispatch only changed mirrors
+GH_TOKEN=... python tools/onboard.py \
+  --apply --trigger-changed \
+  --state .github/mirror-watch-state.json \
   --out onboarding-report.json
 
 # One product, apply, and start it

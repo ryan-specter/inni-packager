@@ -24,6 +24,7 @@ class ConfigTests(unittest.TestCase):
                 "windows-legacy",
                 "linux",
                 "linux-arm64",
+                "linux-legacy",
                 "macos",
             ],
         )
@@ -36,6 +37,7 @@ class ConfigTests(unittest.TestCase):
             "windows-legacy": "rom-windows-legacy.zip",
             "linux": "rom-linux.zip",
             "linux-arm64": "rom-linux-arm64.zip",
+            "linux-legacy": "rom-linux-legacy.zip",
             "macos": "rom-macos.zip",
         }
         for key, name in expected.items():
@@ -47,21 +49,36 @@ class ConfigTests(unittest.TestCase):
             "rom_y2-linux-arm64.zip",
         )
 
-    def test_legacy_platform_is_flagged_and_optional(self):
-        legacy = self.cfg.platform("windows-legacy")
-        self.assertTrue(legacy.legacy)
-        self.assertTrue(legacy.optional)
+    def test_legacy_platforms_are_flagged_and_optional(self):
+        windows = self.cfg.platform("windows-legacy")
+        self.assertTrue(windows.legacy)
+        self.assertTrue(windows.optional)
+        self.assertEqual(windows.updater_asset, "flash_tool_windows.zip")
         self.assertEqual(
-            legacy.updater_asset, "Innioasis-SP-Flash-Tool-windows-legacy.zip"
+            windows.driver_asset, "1.Install.Driver.First.and.Reboot.PC.exe"
         )
-        self.assertIn("SP_Flash_Tool-Windows.zip", legacy.alt_assets)
-        self.assertEqual(legacy.layout, "sp_flash_tool")
+        self.assertIn("SP_Flash_Tool-Windows.zip", windows.alt_assets)
+        self.assertEqual(windows.updater_repo, "y1-community/innioasis-updater")
+        self.assertEqual(windows.layout, "sp_flash_tool")
+
+        linux = self.cfg.platform("linux-legacy")
+        self.assertTrue(linux.legacy)
+        self.assertTrue(linux.optional)
+        self.assertEqual(linux.updater_asset, "flash_tool_linux.zip")
+        self.assertEqual(linux.updater_repo, "y1-community/innioasis-updater")
+        self.assertEqual(linux.arch, "x86")
+        self.assertEqual(linux.suffix, "-linux-legacy.zip")
+        self.assertEqual(linux.layout, "sp_flash_tool")
+
         self.assertFalse(self.cfg.platform("windows").legacy)
+        self.assertFalse(self.cfg.platform("linux").legacy)
+        self.assertFalse(self.cfg.platform("linux-arm64").legacy)
 
     def test_legacy_output_is_not_selected_as_firmware(self):
         assets = [
             {"name": "rom.zip", "size": 10},
             {"name": "rom-windows-legacy.zip", "size": 10},
+            {"name": "rom-linux-legacy.zip", "size": 10},
         ]
         selected = [
             a["name"] for a in mirrorspec.select_firmware_assets(assets, self.cfg)
@@ -79,6 +96,7 @@ class ConfigTests(unittest.TestCase):
             {"name": "rom.zip", "size": 10},
             {"name": "rom-windows.zip", "size": 10},
             {"name": "rom-windows-legacy.zip", "size": 10},
+            {"name": "rom-linux-legacy.zip", "size": 10},
             {"name": "UpdaterCE-Windows-Portable.zip", "size": 10},
             {"name": "SP_Flash_Tool-Windows.zip", "size": 10},
             {"name": "updater.jpg", "size": 10},

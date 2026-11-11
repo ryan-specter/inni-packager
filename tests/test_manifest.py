@@ -100,6 +100,7 @@ class ManifestTests(unittest.TestCase):
                 "windows-legacy",
                 "linux",
                 "linux-arm64",
+                "linux-legacy",
                 "macos",
             ],
         )

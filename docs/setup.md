@@ -143,7 +143,7 @@ should contain `SP_Flash_Tool/` with the scatter, images and `fw_package.ini`.
 | `branch` | `main` | Branch where `index.json` is committed. |
 | `updater_repo` | `y1-community/updater-ce-neo` | Source of the Windows/Linux portable app zips. |
 | `title_prefix` | `Portable Flashing Package: ` | Applied to release titles. |
-| `copy_original_assets` | `true` | Copy every original asset, including the source zips. |
+| `copy_original_assets` | `true` | Copy every original asset; source zips are repacked at maximum deflate. |
 | `source_readme.enabled` | `true` | Copy the source repository README into the mirror. |
 | `source_readme.path` | `README.md` | Target path. Use another path to keep the mirror's operator README. |
 | `source_readme.commit_message` | `Mirror source README` | Commit message for the README update. |
@@ -190,11 +190,12 @@ Windows does not roll Linux or macOS backwards.
 
 ## When to re-run
 
-- After the source repository publishes a release: the schedule picks it up
-  within six hours, or run the workflow manually.
-- After Updater CE publishes a new portable build: the fingerprint includes the
-  updater asset, so the next scheduled run (also every six hours by default)
-  rebuilds every release with the new app.
+- After the source repository publishes a release: the central watcher picks
+  it up within 15 minutes, or the mirror's hourly fallback does. You can also
+  run the workflow manually.
+- After Updater CE or the flash-tool release publishes a new seed: the watcher
+  dispatches every mirror within 15 minutes. The fingerprint includes the
+  updater asset, so the next run rebuilds every release with the new app.
 - After changing `mirror.config.json`: the config fingerprint changes and
   affected releases are rebuilt.
 

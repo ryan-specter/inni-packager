@@ -21,6 +21,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
+import repos as repo_fallback
+
 API_ROOT = "https://api.github.com"
 USER_AGENT = "portable-flashing-package/1.0"
 CHUNK = 1024 * 1024
@@ -159,6 +161,18 @@ class GitHub:
 
     # -------------------------------------------------------------- releases
     def list_releases(self, repo: str, max_pages: int = 50) -> List[Dict[str, Any]]:
+        for candidate in repo_fallback.repo_variants(repo):
+            try:
+                releases = self._list_releases(candidate, max_pages)
+            except ApiError as exc:
+                if exc.status == 404:
+                    continue
+                raise
+            if releases:
+                return releases
+        return []
+
+    def _list_releases(self, repo: str, max_pages: int = 50) -> List[Dict[str, Any]]:
         releases: List[Dict[str, Any]] = []
         for page in range(1, max_pages + 1):
             chunk = self.request_json(
@@ -172,12 +186,14 @@ class GitHub:
         return releases
 
     def get_repo(self, repo: str) -> Optional[Dict[str, Any]]:
-        try:
-            return self.request_json(f"/repos/{repo}")
-        except ApiError as exc:
-            if exc.status == 404:
-                return None
-            raise
+        for candidate in repo_fallback.repo_variants(repo):
+            try:
+                return self.request_json(f"/repos/{candidate}")
+            except ApiError as exc:
+                if exc.status == 404:
+                    continue
+                raise
+        return None
 
     def create_repo(
         self,
@@ -224,15 +240,21 @@ class GitHub:
             data={"ref": ref, "inputs": dict(inputs or {})},
         )
 
-    def get_release_by_tag(self, repo: str, tag: str) -> Optional[Dict[str, Any]]:
-        try:
-            return self.request_json(
-                f"/repos/{repo}/releases/tags/{urllib.parse.quote(tag, safe='')}"
-            )
-        except ApiError as exc:
-            if exc.status == 404:
-                return None
-            raise
+    def get_release_by_tag(
+        self, repo: str, tag: str, allow_fallback: bool = True
+    ) -> Optional[Dict[str, Any]]:
+        candidates = repo_fallback.repo_variants(repo) if allow_fallback else [repo]
+        for candidate in candidates:
+            try:
+                return self.request_json(
+                    f"/repos/{candidate}/releases/tags/"
+                    f"{urllib.parse.quote(tag, safe='')}"
+                )
+            except ApiError as exc:
+                if exc.status == 404:
+                    continue
+                raise
+        return None
 
     # ------------------------------------------------------- repository files
     @staticmethod
@@ -258,13 +280,17 @@ class GitHub:
     def get_readme(self, repo: str) -> Optional[Dict[str, Any]]:
         """Fetch the repository README selected by GitHub's readme endpoint."""
 
-        try:
-            data = self.request_json(f"/repos/{repo}/readme")
-        except ApiError as exc:
-            if exc.status == 404:
-                return None
-            raise
-        return self._file_payload(data)
+        for candidate in repo_fallback.repo_variants(repo):
+            try:
+                data = self.request_json(f"/repos/{candidate}/readme")
+            except ApiError as exc:
+                if exc.status == 404:
+                    continue
+                raise
+            payload = self._file_payload(data)
+            if payload:
+                return payload
+        return None
 
     def get_file(
         self, repo: str, path: str, ref: Optional[str] = None
@@ -273,15 +299,19 @@ class GitHub:
 
         quoted = urllib.parse.quote(path, safe="/")
         params = {"ref": ref} if ref else None
-        try:
-            data = self.request_json(
-                f"/repos/{repo}/contents/{quoted}", params=params
-            )
-        except ApiError as exc:
-            if exc.status == 404:
-                return None
-            raise
-        return self._file_payload(data)
+        for candidate in repo_fallback.repo_variants(repo):
+            try:
+                data = self.request_json(
+                    f"/repos/{candidate}/contents/{quoted}", params=params
+                )
+            except ApiError as exc:
+                if exc.status == 404:
+                    continue
+                raise
+            payload = self._file_payload(data)
+            if payload:
+                return payload
+        return None
 
     def put_file(
         self,
@@ -374,34 +404,40 @@ class GitHub:
             return dest
 
         part = dest.with_name(dest.name + ".part")
-        url = str(asset.get("browser_download_url") or "")
+        urls = repo_fallback.asset_url_variants(
+            str(asset.get("browser_download_url") or "")
+        )
         last_error: Optional[Exception] = None
-        for attempt in range(3):
-            try:
-                self._http_download(url, part, expected, log, progress_every)
-            except urllib.error.HTTPError as exc:
-                last_error = exc
-                if exc.code in (401, 403, 404):
-                    break
-                time.sleep(2 * (attempt + 1))
-                continue
-            except (urllib.error.URLError, TimeoutError, OSError) as exc:
-                last_error = exc
-                if attempt < 2:
+        for url in urls:
+            for attempt in range(3):
+                try:
+                    self._http_download(url, part, expected, log, progress_every)
+                except urllib.error.HTTPError as exc:
+                    last_error = exc
+                    if exc.code in (401, 403, 404):
+                        break
                     time.sleep(2 * (attempt + 1))
-                continue
+                    continue
+                except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                    last_error = exc
+                    if attempt < 2:
+                        time.sleep(2 * (attempt + 1))
+                    continue
 
-            if not expected or (part.exists() and part.stat().st_size == expected):
+                if not expected or (part.exists() and part.stat().st_size == expected):
+                    break
+                # A truncated body can end without a socket error. Restarting
+                # is safer than resuming bytes the server may have cut short.
+                last_error = GitHubError(
+                    f"short transfer for {dest.name}: "
+                    f"{part.stat().st_size if part.exists() else 0} of {expected} bytes"
+                )
+                if attempt < 2:
+                    part.unlink(missing_ok=True)
+                    time.sleep(2 * (attempt + 1))
+            if part.exists() and (not expected or part.stat().st_size == expected):
                 break
-            # A truncated body can end without a socket error. Restarting is
-            # safer than resuming bytes the server may have cut short.
-            last_error = GitHubError(
-                f"short transfer for {dest.name}: "
-                f"{part.stat().st_size if part.exists() else 0} of {expected} bytes"
-            )
-            if attempt < 2:
-                part.unlink(missing_ok=True)
-                time.sleep(2 * (attempt + 1))
+            part.unlink(missing_ok=True)
 
         size_ok = part.exists() and (not expected or part.stat().st_size == expected)
         if not size_ok and asset.get("id") and self.gh_available():

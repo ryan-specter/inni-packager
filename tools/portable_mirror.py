@@ -32,6 +32,7 @@ from urllib.parse import quote
 
 import postinstall
 import release_notes
+import repos as repo_fallback
 from gh import ApiError, GitHub, GitHubError
 from manifest import post_installs_for_source
 from mirrorspec import (
@@ -58,7 +59,7 @@ from packager import (
     inspect_firmware,
     repack_firmware_zip,
 )
-from stats import STATS_ASSET, StatsReport, build_stats, prepare_baseline
+from stats import STATS_ASSET, StatsReport, build_stats, parse_stats_text, prepare_baseline
 
 INDEX_SCHEMA = 1
 
@@ -155,6 +156,35 @@ def resolve_updater_assets(
             f"  updater {platform.key}: {asset['name']} from "
             f"{repo}@{release_tag(release)}"
         )
+        if platform.driver_asset:
+            driver = next(
+                (
+                    candidate
+                    for candidate in release.get("assets") or []
+                    if str(candidate.get("name") or "").lower()
+                    == platform.driver_asset.lower()
+                ),
+                None,
+            )
+            if not driver:
+                raise SystemExit(
+                    f"updater {repo}@{release_tag(release)} has no "
+                    f"{platform.driver_asset}; cannot build {platform.key}"
+                )
+            chosen[platform.key]["driver"] = {
+                "repo": repo,
+                "tag": release_tag(release),
+                "name": str(driver["name"]),
+                "size": int(driver.get("size") or 0),
+                "id": driver.get("id"),
+                "digest": str(driver.get("digest") or ""),
+                "updated_at": str(driver.get("updated_at") or ""),
+                "url": driver.get("browser_download_url"),
+            }
+            log(
+                f"  driver {platform.key}: {driver['name']} from "
+                f"{repo}@{release_tag(release)}"
+            )
     if not chosen:
         raise SystemExit("no updater assets are available for any enabled platform")
     return chosen
@@ -188,11 +218,7 @@ def filter_source_releases(
         index, total = shard
         # Splitting a long backfill across parallel jobs keeps every job under
         # the Actions time limit.  The slice is stable for a given release list.
-        selected = [
-            release
-            for position, release in enumerate(selected)
-            if position % total == index
-        ]
+        selected = [release for position, release in enumerate(selected) if position % total == index]
     return selected
 
 
@@ -470,27 +496,36 @@ def build_index_entry(
 ) -> Dict[str, Any]:
     tag = release_tag(release)
     tag_q = quote(tag, safe="")
+    fallback_repo = repo_fallback.fallback_repo(cfg.mirror_repo)
     assets = []
     for item in block.get("assets") or []:
         name = str(item.get("name") or "")
-        assets.append(
-            {
-                "name": name,
-                "source_asset": item.get("source_asset"),
-                "platform": item.get("platform"),
-                "model": item.get("model"),
-                "type": item.get("type"),
-                "size": int(item.get("size") or 0),
-                "sha256": item.get("sha256"),
-                "url": f"https://github.com/{cfg.mirror_repo}/releases/download/"
-                f"{tag_q}/{quote(name, safe='')}",
-            }
-        )
+        asset = {
+            "name": name,
+            "source_asset": item.get("source_asset"),
+            "platform": item.get("platform"),
+            "model": item.get("model"),
+            "type": item.get("type"),
+            "size": int(item.get("size") or 0),
+            "sha256": item.get("sha256"),
+            "url": f"https://github.com/{cfg.mirror_repo}/releases/download/"
+            f"{tag_q}/{quote(name, safe='')}",
+        }
+        if fallback_repo:
+            asset["fallback_url"] = (
+                f"https://github.com/{fallback_repo}/releases/download/"
+                f"{tag_q}/{quote(name, safe='')}"
+            )
+        assets.append(asset)
     return {
         "tag": tag,
         "title": release_title(cfg, release),
         "source_title": str(release.get("name") or "").strip() or tag,
         "source_url": f"https://github.com/{cfg.source_repo}/releases/tag/{tag_q}",
+        "source_fallback_url": (
+            f"https://github.com/{repo_fallback.fallback_repo(cfg.source_repo)}/releases/tag/{tag_q}"
+            if repo_fallback.fallback_repo(cfg.source_repo) else ""
+        ),
         "published_at": release.get("published_at"),
         "prerelease": bool(release.get("prerelease")),
         "source_notes": str(release.get("body") or ""),
@@ -522,11 +557,18 @@ def make_index(
         key=lambda e: str(e.get("published_at") or ""),
         reverse=True,
     )
+    fallback_repo = repo_fallback.fallback_repo(cfg.mirror_repo)
     index = {
         "schema": INDEX_SCHEMA,
         "generated_at": utcnow(),
         "source_repo": cfg.source_repo,
+        "source_fallback_repo": repo_fallback.fallback_repo(cfg.source_repo),
         "mirror_repo": cfg.mirror_repo,
+        "mirror_fallback_repo": fallback_repo,
+        "fallback_index_url": (
+            f"https://raw.githubusercontent.com/{fallback_repo}/"
+            f"{quote(cfg.branch, safe='')}/index.json" if fallback_repo else ""
+        ),
         "title_prefix": cfg.title_prefix,
         "updater_repo": cfg.updater_repo,
         "platforms": [
@@ -612,6 +654,22 @@ def download_updater_files(
         }
         log(f"  preparing updater for {key}")
         paths[key] = gh.download(str(info.get("repo") or cfg.updater_repo), asset, dest, log=log)
+        driver = info.get("driver")
+        if isinstance(driver, Mapping):
+            driver_dest = work / "updater" / str(driver["tag"]) / str(driver["name"])
+            driver_asset = {
+                "name": driver["name"],
+                "size": driver["size"],
+                "id": driver.get("id"),
+                "browser_download_url": driver.get("url"),
+            }
+            log(f"  preparing driver for {key}")
+            paths[key + "::driver"] = gh.download(
+                str(driver.get("repo") or cfg.updater_repo),
+                driver_asset,
+                driver_dest,
+                log=log,
+            )
     return paths
 
 
@@ -642,6 +700,44 @@ def download_release_asset(
     return gh.download(cfg.source_repo, asset, dest, log=log)
 
 
+def read_published_stats(
+    cfg: MirrorConfig,
+    existing: Optional[Mapping[str, Any]],
+    gh: GitHub,
+    work: Path,
+    tag: str,
+    log: Log,
+) -> Optional[Dict[str, Any]]:
+    """Read the previous stats.txt before a rebuild replaces it.
+
+    GitHub resets an asset's counter when ``--clobber`` uploads it again.  The
+    hidden build block normally carries the baseline, but older releases were
+    built before that ledger existed; their published stats.txt is the only
+    record of earlier downloads.  Parsing it lets the next statistics file keep
+    those cumulative totals instead of starting from the live counters.
+    """
+
+    if not cfg.mirror_repo or not existing:
+        return None
+    asset = next(
+        (
+            item
+            for item in existing.get("assets") or []
+            if str(item.get("name") or "") == STATS_ASSET
+        ),
+        None,
+    )
+    if not asset:
+        return None
+    dest = work / "stats" / tag / "previous-stats.txt"
+    try:
+        path = gh.download(cfg.mirror_repo, asset, dest, log=log)
+        return parse_stats_text(path.read_text(encoding="utf-8", errors="replace"))
+    except (GitHubError, ApiError, OSError, ValueError) as exc:
+        log(f"  warning: could not read previous {STATS_ASSET}: {exc}")
+        return None
+
+
 def build_for_release(
     cfg: MirrorConfig,
     release: Mapping[str, Any],
@@ -656,6 +752,7 @@ def build_for_release(
     dry_run: bool = False,
     copy_originals: bool = True,
     keep_stats: bool = False,
+    ensure_driver: Optional[Callable[[str], Optional[Path]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Download, repackage and upload one release.  Returns a report entry."""
 
@@ -812,6 +909,9 @@ def build_for_release(
             source_repo=cfg.source_repo,
             post_install_name=post_name,
             post_install_data=post_data,
+            target_model=meta["target_model"],
+            target_type=meta["target_type"],
+            driver_path=ensure_driver(platform.key) if ensure_driver else None,
         )
 
     with ThreadPoolExecutor(max_workers=cfg.build_workers) as pool:
@@ -854,10 +954,12 @@ def build_for_release(
         # published stats.txt and its ledger exactly as they are.
         log(f"  keeping {STATS_ASSET} as published")
     else:
+        previous_stats = read_published_stats(cfg, existing, gh, work, tag, log)
         baseline, retired = prepare_baseline(
             existing_block,
             (existing or {}).get("assets") or [],
             expected_names,
+            previous_stats=previous_stats,
         )
         stats = build_stats(
             cfg,
@@ -868,6 +970,7 @@ def build_for_release(
             retired=retired,
             replacing=True,
             expected_names=expected_names,
+            previous_stats=previous_stats,
         )
         stats_path = work / tag / STATS_ASSET
         stats_path.parent.mkdir(parents=True, exist_ok=True)
@@ -886,7 +989,12 @@ def build_for_release(
         "fingerprint": release_fingerprint(cfg, release, updater),
         "built_at": utcnow(),
         "updater": {
-            key: {"tag": info.get("tag"), "name": info.get("name"), "size": info.get("size")}
+            key: {
+                "tag": info.get("tag"),
+                "name": info.get("name"),
+                "size": info.get("size"),
+                "driver": info.get("driver"),
+            }
             for key, info in sorted(updater.items())
         },
         "assets": [
@@ -975,6 +1083,9 @@ def refresh_release_stats(
         block,
         replacing=False,
         expected_names=expected,
+        previous_stats=read_published_stats(
+            cfg, existing, gh, work, release_tag(release), log
+        ),
     )
     tag = release_tag(release)
     path = work / "stats" / tag / STATS_ASSET
@@ -1175,8 +1286,8 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
             cfg, mirror_source_releases(cfg, gh, log), args
         )
         log(
-            f"re-packing {len(releases)} release(s) from "
-            f"{cfg.mirror_repo or '(dry run)'} stored firmware"
+            f"re-packing {len(releases)} release(s) from {cfg.mirror_repo or '(dry run)'} "
+            f"stored firmware into {cfg.mirror_repo or '(dry run)'}"
         )
     else:
         releases = filter_source_releases(
@@ -1211,6 +1322,7 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
     # Download a portable app only when a release actually needs it.  A run
     # where every release is current then costs API calls only.
     updater_paths: Dict[str, Path] = {}
+    driver_paths: Dict[str, Path] = {}
     updater_lock = threading.Lock()
 
     def ensure_updater(key: str) -> Path:
@@ -1230,6 +1342,26 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
                     log=log,
                 )
             return updater_paths[key]
+
+    def ensure_driver(key: str) -> Optional[Path]:
+        info = (updater.get(key) or {}).get("driver")
+        if not isinstance(info, Mapping):
+            return None
+        with updater_lock:
+            if key not in driver_paths:
+                log(f"  preparing driver for {key}")
+                driver_paths[key] = gh.download(
+                    str(info.get("repo") or cfg.updater_repo),
+                    {
+                        "name": info["name"],
+                        "size": info["size"],
+                        "id": info.get("id"),
+                        "browser_download_url": info.get("url"),
+                    },
+                    work_root / "updater" / str(info["tag"]) / str(info["name"]),
+                    log=log,
+                )
+            return driver_paths[key]
 
     try:
         try:
@@ -1316,6 +1448,7 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
                     copy_originals=not mirror_source,
                     keep_stats=mirror_source
                     or bool(getattr(args, "skip_stats", False)),
+                    ensure_driver=ensure_driver,
                 )
             except (GitHubError, ApiError, PackagingError, OSError) as exc:
                 log(f"  FAILED: {exc}")
@@ -1455,6 +1588,9 @@ def build_only(args) -> int:
                     source_repo=cfg.source_repo,
                     post_install_name=post_name,
                     post_install_data=post_data,
+                    target_model=meta["target_model"],
+                    target_type=meta["target_type"],
+                    driver_path=updater_paths.get(platform.key + "::driver"),
                 )
                 manifest["outputs"].append(
                     {

@@ -281,8 +281,16 @@ def _pick_da_file(names: List[str]) -> Optional[str]:
     return sorted(candidates, key=lambda name: (name.count("/"), name))[0]
 
 
-def _tool_layout(tool_zip: zipfile.ZipFile) -> Tuple[str, Optional[str]]:
-    """Return (SP_Flash_Tool prefix, macOS .app name) for a portable zip."""
+def _tool_layout(
+    tool_zip: zipfile.ZipFile, normalize_legacy: bool = False
+) -> Tuple[str, str, Optional[str]]:
+    """Return (source prefix, destination prefix, macOS .app name).
+
+    Legacy archives are normalised under ``SP_Flash_Tool/`` even when upstream
+    publishes a flat directory (the Windows flash tool) or a versioned one
+    (``SP_Flash_Tool_v5.2032_Linux/``).  The guide, history.ini and firmware
+    paths then all agree.
+    """
 
     names = [n for n in (_safe_name(i.filename) for i in tool_zip.infolist()) if n]
     app_name: Optional[str] = None
@@ -293,7 +301,37 @@ def _tool_layout(tool_zip: zipfile.ZipFile) -> Tuple[str, Optional[str]]:
             sp_name = root
         if root.lower().endswith(".app") and app_name is None:
             app_name = root
-    return ((sp_name + "/") if sp_name else "SP_Flash_Tool/"), app_name
+    if sp_name:
+        prefix = sp_name + "/"
+        return prefix, prefix, app_name
+    if normalize_legacy:
+        launchers = {"flash_tool", "flash_tool.exe", "flash_tool.sh"}
+        roots = sorted({name.split("/", 1)[0] for name in names if "/" in name})
+        for root in roots:
+            if any(
+                name.lower()
+                in {(root + "/" + launcher).lower() for launcher in launchers}
+                for name in names
+            ):
+                return root + "/", "SP_Flash_Tool/", app_name
+        if any(name.lower() in launchers for name in names):
+            # Flat Windows archive: everything belongs inside the named folder.
+            return "", "SP_Flash_Tool/", app_name
+    return "SP_Flash_Tool/", "SP_Flash_Tool/", app_name
+
+
+def _tool_dest_name(name: str, source_prefix: str, dest_prefix: str) -> str:
+    """Move one tool entry from its upstream root to the package root."""
+
+    if not source_prefix:
+        return dest_prefix + name
+    if name == source_prefix:
+        return dest_prefix
+    if name.startswith(source_prefix):
+        return dest_prefix + name[len(source_prefix) :]
+    # Keep unrelated root files (for example a Linux udev rule that upstream
+    # placed outside its versioned folder) rather than dropping them.
+    return name
 
 
 def _tool_da_name(tool_zip: zipfile.ZipFile, sp_prefix: str) -> str:
@@ -655,6 +693,9 @@ def build_portable_package(
     source_repo: str = "",
     post_install_name: str = "",
     post_install_data: bytes = b"",
+    target_model: str = "",
+    target_type: str = "",
+    driver_path: Optional[Path] = None,
 ) -> BuildResult:
     """Write one portable package and return its metadata."""
 
@@ -680,9 +721,12 @@ def build_portable_package(
     )
     with tool_context as tool_zip:
         if dmg_layout:
-            sp_prefix, app_name = "", None
+            source_prefix = dest_prefix = ""
+            app_name = None
         else:
-            sp_prefix, app_name = _tool_layout(tool_zip)
+            source_prefix, dest_prefix, app_name = _tool_layout(
+                tool_zip, normalize_legacy=platform.legacy
+            )
         mac_layout = platform.layout == "beside_app"
         if mac_layout and not app_name:
             raise PackagingError(
@@ -693,7 +737,7 @@ def build_portable_package(
         seen = set()
         for src_name, rel, is_dir in plan:
             if platform.layout == "sp_flash_tool":
-                dest = sp_prefix + rel
+                dest = dest_prefix + rel
             elif mac_layout:
                 dest = MAC_FIRMWARE_DIR + "/" + rel
             elif dmg_layout:
@@ -708,36 +752,52 @@ def build_portable_package(
 
         extra_files: Dict[str, bytes] = {}
         if platform.layout == "sp_flash_tool":
-            da_name = _tool_da_name(tool_zip, sp_prefix)
+            da_name = _tool_da_name(tool_zip, source_prefix)
             if firmware.da_file:
                 # A firmware-specific DA is more authoritative than the generic
                 # one bundled by Updater CE.  Put it at the tool root and keep
                 # only its bare filename in history.ini.
                 da_name = posixpath.basename(firmware.da_file)
-                da_dest = sp_prefix + da_name
+                da_dest = dest_prefix + da_name
                 if da_dest.lower() not in seen:
                     firmware_dests.append((firmware.da_file, da_dest, False))
                     seen.add(da_dest.lower())
             extra_files["fw_package.ini"] = ini_text.encode("utf-8")
-            extra_files[sp_prefix + "fw_package.ini"] = ini_text.encode("utf-8")
+            extra_files[dest_prefix + "fw_package.ini"] = ini_text.encode("utf-8")
             scatter_name = firmware.chosen_scatter or "scatter.txt"
-            extra_files[sp_prefix + "history.ini"] = HISTORY_INI.format(
+            extra_files[dest_prefix + "history.ini"] = HISTORY_INI.format(
                 scatter=scatter_name, da=da_name
             ).encode("utf-8")
             if platform.legacy:
-                # Windows XP/7/8 and 32-bit Windows cannot run Updater CE, so
-                # the package explains the tool beside the firmware and shows
-                # where the projects can be supported.  The note stays in the
-                # extraction root and beside flash_tool.exe, because a reader
-                # who unzips with Explorer often only sees one of the two.
+                # Old Windows and 32-bit Linux cannot run Updater CE, so the
+                # package explains the tool beside the firmware, follows the
+                # driver-install/reboot/Download/connect flow and shows where
+                # the projects can be supported.  The note and guide stay in
+                # the extraction root and beside the tool, because a reader who
+                # unzips with Explorer often only sees one of the two.
                 donate = legacy_donate_txt(
                     software_name, version, source_asset
                 ).encode("utf-8")
                 extra_files["donate.txt"] = donate
-                extra_files[sp_prefix + "donate.txt"] = donate
-                extra_files["README.txt"] = legacy_readme(
-                    software_name, version, source_asset, scatter_name
+                extra_files[dest_prefix + "donate.txt"] = donate
+                guide = legacy_readme(
+                    software_name,
+                    version,
+                    source_asset,
+                    scatter_name,
+                    platform_key=platform.key,
+                    model=target_model,
+                    target_type=target_type,
                 ).encode("utf-8")
+                extra_files["README.txt"] = guide
+                extra_files[dest_prefix + "README.txt"] = guide
+                if driver_path is not None:
+                    driver_name = _safe_name(driver_path.name)
+                    if not driver_name or "/" in driver_name:
+                        raise PackagingError(
+                            f"unsafe driver filename: {driver_path.name!r}"
+                        )
+                    extra_files["Driver/" + driver_name] = driver_path.read_bytes()
         elif dmg_layout:
             extra_files[MAC_DMG_FIRMWARE_DIR + "/fw_package.ini"] = ini_text.encode(
                 "utf-8"
@@ -817,6 +877,8 @@ def build_portable_package(
                             f"{MAC_APP_NAME}/Contents/_CodeSignature"
                         ):
                             continue
+                    if platform.layout == "sp_flash_tool":
+                        name = _tool_dest_name(name, source_prefix, dest_prefix)
                     if name.lower() in overrides:
                         # The firmware or our metadata replaces this file.
                         continue
