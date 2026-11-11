@@ -41,6 +41,20 @@ class FetchManifestTests(unittest.TestCase):
         self.assertIn("_pfp=", url)
 
 
+    def test_raw_github_manifest_uses_the_contents_api(self):
+        self.assertEqual(
+            manifest._github_api_url_for_raw(
+                "https://raw.githubusercontent.com/y1-community/Innioasis-Updater/main/slidia_manifest.xml"
+            ),
+            "https://api.github.com/repos/y1-community/Innioasis-Updater/contents/slidia_manifest.xml?ref=main",
+        )
+        self.assertIsNone(
+            manifest._github_api_url_for_raw(
+                "https://innioasis.app/slidia_manifest.xml"
+            )
+        )
+
+
 class ManifestTests(unittest.TestCase):
     def setUp(self):
         self.packages = manifest.parse_manifest(SAMPLE)

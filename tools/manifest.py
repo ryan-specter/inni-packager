@@ -10,6 +10,9 @@ valid ``owner/repo`` are ignored.
 
 from __future__ import annotations
 
+import base64
+import json
+import os
 import re
 import time
 import urllib.parse
@@ -79,6 +82,59 @@ class Product:
         return self.source_repo.split("/", 1)[-1].replace("-", " ").title()
 
 
+def _github_api_url_for_raw(url: str) -> Optional[str]:
+    """Map a raw.githubusercontent.com file URL to its authoritative API URL."""
+
+    parts = urllib.parse.urlsplit(url)
+    if parts.netloc.lower() != "raw.githubusercontent.com":
+        return None
+    segments = [
+        urllib.parse.unquote(segment)
+        for segment in parts.path.strip("/").split("/")
+    ]
+    if len(segments) < 4:
+        return None
+    owner, repo, branch = segments[:3]
+    path = "/".join(segments[3:])
+    return (
+        "https://api.github.com/repos/"
+        f"{urllib.parse.quote(owner, safe='')}/"
+        f"{urllib.parse.quote(repo, safe='')}/contents/"
+        f"{urllib.parse.quote(path, safe='/')}?"
+        f"ref={urllib.parse.quote(branch, safe='')}"
+    )
+
+
+def _fetch_github_api_manifest(url: str, timeout: int) -> Optional[str]:
+    """Read a raw manifest through the contents API, bypassing raw caches."""
+
+    api_url = _github_api_url_for_raw(url)
+    if not api_url:
+        return None
+    headers = {
+        "User-Agent": "inni-packager/1.0",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = (
+        os.environ.get("GH_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+        or ""
+    ).strip()
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    try:
+        request = urllib.request.Request(api_url, headers=headers)
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        content = payload.get("content")
+        if not content:
+            return None
+        return base64.b64decode(content).decode("utf-8")
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def _uncached_url(url: str) -> str:
     """Add a one-shot query key so raw/CDN caches cannot serve stale XML."""
 
@@ -111,6 +167,9 @@ def fetch_manifest(location: Optional[str] = None, timeout: int = 45) -> str:
     last_error: Optional[Exception] = None
     for candidate in locations:
         if candidate.startswith(("https://", "http://")):
+            api_manifest = _fetch_github_api_manifest(candidate, timeout)
+            if api_manifest is not None:
+                return api_manifest
             request = urllib.request.Request(
                 _uncached_url(candidate),
                 headers={
