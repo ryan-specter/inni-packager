@@ -175,8 +175,14 @@ class StatsTests(unittest.TestCase):
         previous = parse_stats_text(first.text)
         baseline, retired = prepare_baseline(
             None,
-            [asset("rom-windows.zip", 250), asset("rom.zip", 100), asset("stats.txt", 9)],
-            {"rom-windows.zip", "rom.zip", STATS_ASSET},
+            [
+                asset("rom-windows.zip", 250),
+                asset("rom-linux.zip", 75),
+                asset("rom-macos.zip", 125),
+                asset("rom.zip", 100),
+                asset("stats.txt", 9),
+            ],
+            {"rom-windows.zip", "rom-linux.zip", "rom-macos.zip", "rom.zip", STATS_ASSET},
             previous_stats=previous,
         )
         self.assertEqual(baseline["rom-windows.zip"], 300)
@@ -189,7 +195,7 @@ class StatsTests(unittest.TestCase):
             baseline=baseline,
             retired=retired,
             replacing=True,
-            expected_names={"rom-windows.zip", "rom.zip", STATS_ASSET},
+            expected_names={"rom-windows.zip", "rom-linux.zip", "rom-macos.zip", "rom.zip", STATS_ASSET},
             previous_stats=previous,
             generated_at="2026-11-04T00:00:00Z",
         )

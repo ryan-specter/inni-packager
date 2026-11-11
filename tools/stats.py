@@ -244,6 +244,27 @@ def build_breakdown(
     """Group mirror and source downloads by the original firmware package."""
 
     block = block or {}
+    source_names = [
+        str(name) for name in source_counts if firmware_asset_name_matches(str(name), cfg)
+    ]
+    original_names = [
+        str(name)
+        for name in block.get("original_assets") or []
+        if firmware_asset_name_matches(str(name), cfg)
+    ]
+    candidate_names = source_names + [name for name in original_names if name not in source_names]
+
+    def source_for_portable(name: str, explicit: str = "") -> str:
+        if explicit:
+            return explicit
+        for candidate in candidate_names:
+            stem = candidate[:-4] if candidate.lower().endswith(".zip") else candidate
+            if name.lower().startswith(stem.lower() + "-"):
+                return candidate
+        if len(candidate_names) == 1:
+            return candidate_names[0]
+        return name
+
     portable: Dict[str, Dict[str, str]] = {}
     for item in block.get("assets") or []:
         name = str(item.get("name") or "")
@@ -252,7 +273,7 @@ def build_breakdown(
             continue
         portable[name] = {
             "platform": platform,
-            "source_asset": str(item.get("source_asset") or name),
+            "source_asset": source_for_portable(name, str(item.get("source_asset") or "")),
         }
 
     groups: Dict[str, Dict[str, Any]] = {}
