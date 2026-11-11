@@ -474,6 +474,49 @@ class PackagerTests(unittest.TestCase):
         self.assertNotIn("SP_Flash_Tool/lk-verified.img", names)
         self.assertNotIn("SP_Flash_Tool/logo-verified.bin", names)
 
+    def test_omitted_data_image_is_disabled_in_the_packed_scatter(self):
+        source = self.tmp / "rom-with-userdata.zip"
+        scatter = (
+            "- partition_index: SYS0\n"
+            "  partition_name: userdata\n"
+            "  file_name: userdata.img\n"
+            "  is_download: true\n"
+            "- partition_index: SYS1\n"
+            "  partition_name: boot\n"
+            "  file_name: boot.img\n"
+            "  is_download: true\n"
+        ).encode("utf-8")
+        write_zip(
+            source,
+            [
+                ("MT6572_Android_scatter.txt", scatter, FILE_MODE),
+                ("userdata.img", b"user data", FILE_MODE),
+                ("boot.img", b"boot", FILE_MODE),
+            ],
+        )
+        out = self.tmp / "omitted-windows.zip"
+        build_portable_package(
+            self.windows_tool,
+            inspect_firmware(source),
+            self.cfg.platform("windows"),
+            out,
+            self.ini,
+            "Original Software",
+            "1.0",
+            "rom-with-userdata.zip",
+            omit_images=["userdata.img"],
+        )
+        names = names_of(out)
+        self.assertNotIn("SP_Flash_Tool/userdata.img", names)
+        self.assertIn("SP_Flash_Tool/boot.img", names)
+        with zipfile.ZipFile(out) as archive:
+            packed_scatter = archive.read(
+                "SP_Flash_Tool/MT6572_Android_scatter.txt"
+            ).decode("utf-8")
+        self.assertIn("file_name: NONE", packed_scatter)
+        self.assertIn("is_download: false", packed_scatter)
+        self.assertIn("file_name: boot.img", packed_scatter)
+
     def test_preferred_scatter_chooses_a_hardware_layout(self):
         multi = self.tmp / "dual.zip"
         write_zip(

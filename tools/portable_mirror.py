@@ -100,6 +100,18 @@ def release_tag(release: Mapping[str, Any]) -> str:
     return str(release.get("tag_name") or "")
 
 
+def configured_omit_images(cfg: MirrorConfig) -> Tuple[str, ...]:
+    """Return the non-firmware images a mirror asks us to leave out."""
+
+    firmware = cfg.raw.get("firmware") or {}
+    values = firmware.get("omit_images") or []
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, list):
+        return ()
+    return tuple(str(value).strip() for value in values if str(value).strip())
+
+
 def find_updater_asset(
     releases: Sequence[Mapping[str, Any]], platform: Platform
 ) -> Optional[Tuple[Mapping[str, Any], Mapping[str, Any]]]:
@@ -912,6 +924,7 @@ def build_for_release(
             target_model=meta["target_model"],
             target_type=meta["target_type"],
             driver_path=ensure_driver(platform.key) if ensure_driver else None,
+            omit_images=configured_omit_images(cfg),
         )
 
     with ThreadPoolExecutor(max_workers=cfg.build_workers) as pool:
@@ -1614,6 +1627,7 @@ def build_only(args) -> int:
                     target_model=meta["target_model"],
                     target_type=meta["target_type"],
                     driver_path=updater_paths.get(platform.key + "::driver"),
+                    omit_images=configured_omit_images(cfg),
                 )
                 manifest["outputs"].append(
                     {

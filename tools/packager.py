@@ -38,7 +38,7 @@ import stat
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from mirrorspec import (
     Platform,
@@ -446,8 +446,55 @@ def _optional_package_file(rel: str) -> bool:
     )
 
 
+def _is_omitted_image(name: str, omitted: Set[str]) -> bool:
+    """Return True when a scatter image is explicitly omitted from packages."""
+
+    if not omitted:
+        return False
+    clean = posixpath.normpath(str(name).replace("\\", "/").strip().strip("\"'"))
+    return clean.lower() in omitted or posixpath.basename(clean).lower() in omitted
+
+
+def _scatter_without_images(text: str, omitted: Set[str]) -> str:
+    """Mark omitted images as non-downloadable in a scatter's partition blocks."""
+
+    if not omitted:
+        return text
+    lines = text.splitlines(keepends=True)
+    result: List[str] = []
+    block: List[str] = []
+
+    def flush() -> None:
+        nonlocal block
+        if not block:
+            return
+        blob = "".join(block)
+        names = re.findall(r"^\s*file_name:\s*(\S+)", blob, re.MULTILINE)
+        if any(_is_omitted_image(name, omitted) for name in names):
+            blob = re.sub(
+                r"^(\s*file_name:\s*).*$", r"\1NONE", blob, count=1, flags=re.MULTILINE
+            )
+            blob = re.sub(
+                r"^(\s*is_download:\s*).*$",
+                r"\1false",
+                blob,
+                count=1,
+                flags=re.MULTILINE,
+            )
+        result.append(blob)
+        block = []
+
+    for line in lines:
+        if re.match(r"^\s*-\s*partition_index:", line):
+            flush()
+        block.append(line)
+    flush()
+    return "".join(result)
+
+
 def _firmware_plan(
     firmware: FirmwarePackage,
+    omit_images: Sequence[str] = (),
 ) -> Tuple[List[Tuple[str, str, bool]], List[str]]:
     """Map firmware entries to paths relative to the scatter folder.
 
@@ -459,6 +506,11 @@ def _firmware_plan(
 
     plan: List[Tuple[str, str, bool]] = []
     skipped: List[str] = []
+    omitted = {
+        posixpath.normpath(str(name).replace("\\", "/").strip().strip("\"'")).lower()
+        for name in omit_images
+        if str(name).strip()
+    }
     base = firmware.scatter_dir
     base_prefix = base + "/" if base and not base.endswith("/") else base
     with zipfile.ZipFile(firmware.path) as zf:
@@ -472,6 +524,10 @@ def _firmware_plan(
                 text = ""
             listed = _scatter_listed_files(text)
             required = listed or None
+            if required:
+                required = {
+                    name for name in required if not _is_omitted_image(name, omitted)
+                }
 
         keep = {name.lower() for name in (required or ())}
         if chosen:
@@ -522,6 +578,9 @@ def _firmware_plan(
                 continue
             is_dir = name.endswith("/")
             basename = posixpath.basename(rel.rstrip("/"))
+            if not is_dir and _is_omitted_image(rel, omitted):
+                skipped.append(info.filename)
+                continue
             if not is_dir:
                 present.add(rel.lower())
             # A portable package carries exactly one scatter: the one the
@@ -705,6 +764,7 @@ def build_portable_package(
     target_model: str = "",
     target_type: str = "",
     driver_path: Optional[Path] = None,
+    omit_images: Sequence[str] = (),
 ) -> BuildResult:
     """Write one portable package and return its metadata."""
 
@@ -717,7 +777,12 @@ def build_portable_package(
             f"{firmware.path.name} has {len(firmware.scatters)} scatter files; "
             "a portable package must carry exactly one"
         )
-    plan, skipped = _firmware_plan(firmware)
+    plan, skipped = _firmware_plan(firmware, omit_images)
+    omitted = {
+        posixpath.normpath(str(name).replace("\\", "/").strip().strip("\"'")).lower()
+        for name in omit_images
+        if str(name).strip()
+    }
     dmg_layout = platform.layout == "beside_dmg"
     if dmg_layout and tool_zip_path.suffix.lower() != ".dmg":
         raise PackagingError(
@@ -745,6 +810,14 @@ def build_portable_package(
         firmware_dests: List[Tuple[str, str, bool]] = []
         seen = set()
         for src_name, rel, is_dir in plan:
+            if (
+                omitted
+                and firmware.chosen_scatter
+                and rel.lower() == firmware.chosen_scatter.lower()
+            ):
+                # The scatter is rewritten below so omitted images are not
+                # left as downloadable entries in the package.
+                continue
             if platform.layout == "sp_flash_tool":
                 dest = dest_prefix + rel
             elif mac_layout:
@@ -760,6 +833,25 @@ def build_portable_package(
             firmware_dests.append((src_name, dest, is_dir))
 
         extra_files: Dict[str, bytes] = {}
+        if omitted and firmware.chosen_scatter:
+            scatter_src = (
+                f"{firmware.scatter_dir}/{firmware.chosen_scatter}"
+                if firmware.scatter_dir
+                else firmware.chosen_scatter
+            )
+            with zipfile.ZipFile(firmware.path) as firmware_zip:
+                scatter_text = firmware_zip.read(scatter_src).decode(
+                    "utf-8", "ignore"
+                )
+            if platform.layout == "sp_flash_tool":
+                scatter_dest = dest_prefix + firmware.chosen_scatter
+            elif mac_layout:
+                scatter_dest = MAC_FIRMWARE_DIR + "/" + firmware.chosen_scatter
+            else:
+                scatter_dest = MAC_DMG_FIRMWARE_DIR + "/" + firmware.chosen_scatter
+            extra_files[scatter_dest] = _scatter_without_images(
+                scatter_text, omitted
+            ).encode("utf-8")
         if platform.layout == "sp_flash_tool":
             da_name = _tool_da_name(tool_zip, source_prefix)
             if firmware.da_file:
