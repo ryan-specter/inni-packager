@@ -1,5 +1,5 @@
 {
-  "manifest": "5b3b44cb037ff6d4e26730925f758602ab05496f876fc88e7b063407c8f78c97",
+  "manifest": "68cc2d99d3d0a18b9c3e736df10cf8a13478b8b4e2409e78671b3ca223b3bd21",
   "products": {
     "classyplayer/classy": "d9724fa801e512dd2b4e06fbaef85dcbd03f08f792c2cc042f3cb236c7b7d6a2",
     "fabianzettl/inniclassic": "dd7856922fc0bf2744631c93cf426f02bb0a22aac4ac6f1dfcd1d9973fdc19db",
@@ -20,7 +20,7 @@
     "y1-community/q5-stock-rom": "f4e28426ef9a15d15411837fd45bbeb0d283dadc42bc0d37980bfe7fb65b0867",
     "y1-community/y1-ata-rom": "846a18e608f62f89536cd6cbeb00ea6b9ff0e562888b26bd5a89d4dae2f4fdb0",
     "y1-community/y1-linux-rom": "8b85744e5d0bf568ee218fdf479794b80614dff6dd807a087d94a12d88a2a40c",
-    "y1-community/y1-stock-rom": "e5207c6c574a9695e0057b66137b131b236618e3c4365280ce133a7fc41c4c05",
+    "y1-community/y1-stock-rom": "b372ce9792f506957088da067c97b65ee54d3998b8a91cf05a959e922b89f1fd",
     "y1-community/y2-ata-rom": "c220d1ec25013f985ece8f159d0ca942691712db3ea01c10f3f4982ec8f54963"
   },
   "seeds": {
