@@ -436,6 +436,44 @@ class PackagerTests(unittest.TestCase):
         self.assertNotIn("SP_Flash_Tool/boot-sign.img", names)
         self.assertNotIn("SP_Flash_Tool/system-sign.img", names)
 
+    def test_verified_images_are_packed_under_scatter_names(self):
+        verified = self.tmp / "rom-verified.zip"
+        scatter = (
+            "- partition_index: SYS0\n"
+            "  partition_name: lk\n"
+            "  file_name: lk.img\n"
+            "  is_download: true\n"
+            "- partition_index: SYS1\n"
+            "  partition_name: logo\n"
+            "  file_name: logo.bin\n"
+            "  is_download: true\n"
+        ).encode("utf-8")
+        write_zip(
+            verified,
+            [
+                ("MT6765_Android_scatter.txt", scatter, FILE_MODE),
+                ("lk-verified.img", b"verified lk", FILE_MODE),
+                ("logo-verified.bin", b"verified logo", FILE_MODE),
+            ],
+        )
+        package = inspect_firmware(verified)
+        out = self.tmp / "verified-windows.zip"
+        build_portable_package(
+            self.windows_tool,
+            package,
+            self.cfg.platform("windows"),
+            out,
+            self.ini,
+            "Original Software",
+            "1.0",
+            "rom-verified.zip",
+        )
+        names = names_of(out)
+        self.assertIn("SP_Flash_Tool/lk.img", names)
+        self.assertIn("SP_Flash_Tool/logo.bin", names)
+        self.assertNotIn("SP_Flash_Tool/lk-verified.img", names)
+        self.assertNotIn("SP_Flash_Tool/logo-verified.bin", names)
+
     def test_preferred_scatter_chooses_a_hardware_layout(self):
         multi = self.tmp / "dual.zip"
         write_zip(

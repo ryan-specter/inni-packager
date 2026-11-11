@@ -59,6 +59,13 @@ MAC_DMG_FIRMWARE_DIR = "firmware"
 # the normal spelling and the single-underscore variant as metadata so neither
 # can leak into a generated package.
 MACOS_METADATA_DIRS = frozenset({"__macosx", "_macosx"})
+#: Vendor stock archives ship a signed image under a qualified name while the
+#: scatter keeps the plain partition name. Innioasis MT6765 dumps (the G5 one)
+#: write ``lk-verified.img`` and friends; other tools write ``-sign`` or
+#: ``-signed``. The bytes are the image with a signature appended, which SP
+#: Flash Tool flashes under the name the scatter declares.
+SIGNED_IMAGE_SUFFIXES = ("-sign", "-signed", "-verified")
+
 PACKAGE_IMAGE_NAMES = ("updater.png", "updater.jpg", "updater.jpeg")
 
 DA_NAMES = ("MTK_AllInOne_DA.bin", "MTK_AllInOneDA.bin")
@@ -492,9 +499,11 @@ def _firmware_plan(
             if key in available:
                 continue
             stem, ext = posixpath.splitext(name)
-            signed = f"{stem}-sign{ext}".lower()
-            if signed in available:
-                alias_targets[signed] = name
+            for suffix in SIGNED_IMAGE_SUFFIXES:
+                qualified = f"{stem}{suffix}{ext}".lower()
+                if qualified in available:
+                    alias_targets[qualified] = name
+                    break
 
         for info in zf.infolist():
             name = _safe_name(info.filename)
