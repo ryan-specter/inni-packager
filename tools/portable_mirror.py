@@ -1484,7 +1484,14 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
                     {"tag": tag, "error": str(result.get("reason") or "packaging failed")}
                 )
             elif result["action"] == "skipped":
-                index_updates[tag] = None
+                # A release that can no longer be rebuilt (for example, its
+                # source zip now contains two alternate scatters) may still
+                # have a valid previously published package.  Keep that
+                # entry rather than dropping it from the public index.
+                if existing and block and block.get("assets"):
+                    index_updates[tag] = build_index_entry(cfg, release, block)
+                else:
+                    index_updates[tag] = None
 
             if args.keep_work:
                 log(f"  work kept at {work_root / tag}")

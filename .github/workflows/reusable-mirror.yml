@@ -59,6 +59,12 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  # Mirror jobs commit the mirrored source tree and index.json.  Serialize
+  # runs for one mirror so two dispatches cannot race on that push.
+  group: portable-mirror-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   plan:
     runs-on: ubuntu-latest
