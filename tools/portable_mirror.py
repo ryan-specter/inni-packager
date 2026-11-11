@@ -927,10 +927,15 @@ def build_for_release(
             key = f"{result.source_asset}::{result.platform}"
             results[key] = result
     if not results:
+        # A source archive can be intentionally unsupported (for example, a
+        # vendor zip with no scatter, or one with two alternate scatters).
+        # Do not fail the whole mirror and prevent later releases' indexes from
+        # being committed; record it as skipped with the reason instead.
         return {
             "tag": tag,
-            "action": "failed",
+            "action": "skipped",
             "reason": "; ".join(failures) or "packaging failed",
+            "failures": failures,
         }
 
     ordered_results = sorted(
@@ -1314,6 +1319,7 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
         "mirror_repo": cfg.mirror_repo,
         "updater": updater,
         "releases": [],
+        "warnings": [],
         "failures": [],
     }
     index_updates: Dict[str, Optional[Mapping[str, Any]]] = {}
@@ -1463,8 +1469,12 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
             if result["action"] == "built" and result.get("block"):
                 index_updates[tag] = build_index_entry(cfg, release, result["block"])
                 if result.get("failures"):
-                    report["failures"].append(
-                        {"tag": tag, "error": "; ".join(result["failures"])}
+                    # Some platforms may fail while the remaining platforms
+                    # publish successfully.  Keep the warnings in the report
+                    # but do not stop the index commit or turn the whole mirror
+                    # red for one unsupported platform combination.
+                    report["warnings"].append(
+                        {"tag": tag, "warning": "; ".join(result["failures"])}
                     )
             elif result["action"] == "failed":
                 # A release whose packages could not be built must fail the
@@ -1514,6 +1524,12 @@ def write_summary(report: Mapping[str, Any], log: Log) -> None:
     ]
     for item in report.get("releases", []):
         lines.append(f"| `{item.get('tag')}` | {item.get('action')} |")
+    if report.get("warnings"):
+        lines += ["", "### Warnings", ""]
+        for warning in report["warnings"]:
+            lines.append(
+                f"- `{warning.get('tag')}`: {warning.get('warning')}"
+            )
     if report.get("failures"):
         lines += ["", "### Failures", ""]
         for failure in report["failures"]:
