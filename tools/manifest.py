@@ -11,6 +11,8 @@ valid ``owner/repo`` are ignored.
 from __future__ import annotations
 
 import re
+import time
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +79,23 @@ class Product:
         return self.source_repo.split("/", 1)[-1].replace("-", " ").title()
 
 
+def _uncached_url(url: str) -> str:
+    """Add a one-shot query key so raw/CDN caches cannot serve stale XML."""
+
+    parts = urllib.parse.urlsplit(url)
+    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    query.append(("_pfp", str(time.time_ns())))
+    return urllib.parse.urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            parts.path,
+            urllib.parse.urlencode(query),
+            parts.fragment,
+        )
+    )
+
+
 def fetch_manifest(location: Optional[str] = None, timeout: int = 45) -> str:
     """Read the manifest from GitHub first, then the site, then a local path.
 
@@ -93,7 +112,12 @@ def fetch_manifest(location: Optional[str] = None, timeout: int = 45) -> str:
     for candidate in locations:
         if candidate.startswith(("https://", "http://")):
             request = urllib.request.Request(
-                candidate, headers={"User-Agent": "inni-packager/1.0"}
+                _uncached_url(candidate),
+                headers={
+                    "User-Agent": "inni-packager/1.0",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
+                },
             )
             try:
                 with urllib.request.urlopen(request, timeout=timeout) as response:

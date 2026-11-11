@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -22,6 +23,22 @@ SAMPLE = """<?xml version="1.0"?>
   <package name="Ignored apk" repo="a/b" device="Y1" type="apk" />
 </slidia>
 """
+
+
+class FetchManifestTests(unittest.TestCase):
+    def test_http_fetch_adds_a_cache_busting_query(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"<slidia/>"
+        with mock.patch.object(
+            manifest.urllib.request, "urlopen", return_value=response
+        ) as opened:
+            self.assertEqual(
+                manifest.fetch_manifest("https://example.com/slidia_manifest.xml"),
+                "<slidia/>",
+            )
+        url = opened.call_args.args[0].full_url
+        self.assertTrue(url.startswith("https://example.com/slidia_manifest.xml?"))
+        self.assertIn("_pfp=", url)
 
 
 class ManifestTests(unittest.TestCase):
