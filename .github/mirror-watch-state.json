@@ -25,7 +25,7 @@
   },
   "seeds": {
     "y1-community/innioasis-updater": "c4cf2f3f8ed45bea672c6dec642797affb44ab72d38216f08fa1fe2dafb7367c",
-    "y1-community/updater-ce-neo": "fbb56a6e11c4cf89304e0f848e00b334e97e452aa35c048edf4ba97973764df5"
+    "y1-community/updater-ce-neo": "39bd5345bd391a53ca80896cfeac292ace8550113d1d18840014cc9a200d9844"
   },
   "sources": {
     "classyplayer/classy": "df67eaa7caf5a7163b72ccf9f72bc698e0ada878760df888fb96c3a1d16bde04",
