@@ -24,16 +24,16 @@
     "y1-community/y2-ata-rom": "c220d1ec25013f985ece8f159d0ca942691712db3ea01c10f3f4982ec8f54963"
   },
   "seeds": {
-    "y1-community/innioasis-updater": "c4cf2f3f8ed45bea672c6dec642797affb44ab72d38216f08fa1fe2dafb7367c",
-    "y1-community/updater-ce-neo": "fbb56a6e11c4cf89304e0f848e00b334e97e452aa35c048edf4ba97973764df5"
+    "y1-community/innioasis-updater": "d4e50e3541ddab8ee329cff565103ae2c7d015bd4f13c3a11060b718972e222a",
+    "y1-community/updater-ce-neo": "31fa00dc3add29f8d3694d71212fa46f8650dc3800cde102c7292d15dc3471e5"
   },
   "sources": {
-    "classyplayer/classy": "df67eaa7caf5a7163b72ccf9f72bc698e0ada878760df888fb96c3a1d16bde04",
+    "classyplayer/classy": "ac63e9d15f8e6658828641d57da12615e86db112aad54cee66c7adc7ab070ac4",
     "fabianzettl/inniclassic": "027b925155706c69175bbc1be9a30c1060edbe6b81362c431abcfa1640c5bcfd",
     "ismileblue/y1_launcher": "588b6bd35071ea3b3633be53385b8370da1f1a6c000adfa5431b7e8ad44436f7",
-    "jarvissax/rondo": "d155f3def85b3cc9f0be2b10e8a7481de08ed919a1aa1f900712beae1a651b93",
+    "jarvissax/rondo": "25a85e8c4052402903eb27edb2dbd90927958742f3f4d670e12583d2d2c4eebc",
     "leska1337/better-y": "395a5749e07368d56e2b7396034d1f0a5c69e2885e57f78c8374f556e437a8fd",
-    "rockbox-y1/rockbox": "69e150e27719ca27a50938b5ac9b63cfc1de93539f1a6d52ae133be7314a0b60",
+    "rockbox-y1/rockbox": "9785d7f130dc7b99a0f24420685cb77c1e4edb79928fe2993c38738dd1adf7bf",
     "ryan-specter/koensayr-auto": "7ae03122ff963950d9c40014b42ff894c3fceccd565e856b324ef69ff8d9e236",
     "schulzcode/y2linux": "bb03a1c31e702b6b4c80c323df2109652123bb4436e40d5134a7e4d72124f52f",
     "schulzcode/y2player": "4dd8d2c5e7e7ffcd1132ec4cd5bb2a2b2e54fc9eb7a57c219c73a811d96ead97",
