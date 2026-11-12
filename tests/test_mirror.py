@@ -184,6 +184,25 @@ class UpdaterSelectionTests(unittest.TestCase):
         self.assertIn("linux-arm64", updater)
         self.assertEqual(updater["linux-arm64"]["name"], "UpdaterCE-Linux-Portable-arm64.zip")
 
+    def test_doubled_zip_suffix_still_matches_the_newest_app(self):
+        releases = [
+            {
+                "tag_name": "2.5.4",
+                "assets": [asset("UpdaterCE-Windows-Portable.zip.zip", 40, 9)],
+            },
+            {
+                "tag_name": "2.5.1",
+                "assets": [asset("UpdaterCE-Windows-Portable.zip", 10, 1)],
+            },
+        ]
+        updater = pm.resolve_updater_assets(
+            self.cfg(["windows"]), FakeGitHub(releases), quiet
+        )
+        self.assertEqual(updater["windows"]["tag"], "2.5.4")
+        self.assertEqual(
+            updater["windows"]["name"], "UpdaterCE-Windows-Portable.zip.zip"
+        )
+
     def test_missing_arm64_is_optional(self):
         releases = [
             {

@@ -45,11 +45,15 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 # 12: every zip member is deflated at level 9, including streamed copies and
 #     the macOS DMG; original firmware zips are repacked the same way and keep
 #     only standard *_Android_scatter.txt layouts when several are present.
-# 13: Windows XP/7/8 packages are built from the flash-tool-only asset and
+# 13: Windows 7/8/32-bit packages are built from the flash-tool-only asset and
 #     carry donate.txt, for computers that cannot run Updater CE.
 # 14: 32-bit Linux gets the same flash-tool-only package, and every legacy
 #     package carries the driver-install, reboot, Download, connect guide.
-BUILDER_VERSION = 15
+# 15: configured non-firmware images are omitted from packages.
+# 16: a portable app published with a doubled archive suffix (for example
+#     UpdaterCE-Windows-Portable.zip.zip) still matches its platform, so
+#     repacks use the newest Updater CE payload instead of an older one.
+BUILDER_VERSION = 16
 
 DEFAULT_BRANCH = "main"
 DEFAULT_TITLE_PREFIX = "Portable Flashing Package: "
@@ -70,9 +74,9 @@ KNOWN_SUFFIXES = (
 )
 
 # Legacy Windows packages wrap the SP Flash Tool instead of Updater CE.  They
-# must keep working on Windows XP, Vista, 7 and 8/8.1, where the PySide6 app
-# cannot run, so they carry a plain-text note with the ways to support the
-# project rather than a link to the app's own pages.
+# exist for Windows 7/8 and 32-bit Windows, where the PySide6 app cannot run,
+# so they carry a plain-text note with the ways to support the project rather
+# than a link to the app's own pages.
 DONATION_URL = "https://innioasis.app/support_devs.html"
 DONATION_LINKS = (
     ("Buy Me a Coffee", "https://buymeacoffee.com/ryanspecter"),
@@ -125,7 +129,7 @@ DEFAULT_PLATFORMS: Dict[str, Dict[str, Any]] = {
         "arch": "arm64",
         "optional": True,
     },
-    # Windows XP/Vista/7/8/8.1 and 32-bit Windows cannot run Updater CE.  The
+    # Windows 7/8 and 32-bit Windows cannot run Updater CE.  The
     # updater repository publishes the SP Flash Tool on its own, so the same
     # firmware is packed beside that tool instead of the app.  Optional until
     # the first flash-tool-only asset is published upstream.
@@ -136,6 +140,7 @@ DEFAULT_PLATFORMS: Dict[str, Dict[str, Any]] = {
         # capitalised names stay accepted so a mirror never fails just because
         # upstream renamed the asset again.
         "updater_asset": "flash_tool_windows.zip",
+        "tag": "flash_tool",
         "updater_asset_alternates": [
             "SP_Flash_Tool-Windows.zip",
             "Innioasis-SP-Flash-Tool-windows-legacy.zip",
@@ -171,6 +176,7 @@ DEFAULT_PLATFORMS: Dict[str, Dict[str, Any]] = {
     # Updater CE package, which also carries the tool.
     "linux-legacy": {
         "updater_asset": "flash_tool_linux.zip",
+        "tag": "flash_tool",
         "updater_asset_alternates": ["SP_Flash_Tool-Linux.zip"],
         "updater_repo": "y1-community/innioasis-updater",
         "suffix": "-linux-legacy.zip",
@@ -519,6 +525,21 @@ def asset_base_name(name: str) -> str:
     return name[:-4] if name.lower().endswith(".zip") else name
 
 
+def normalized_asset_name(name: str) -> str:
+    """Compare asset names that upstream published with a doubled suffix.
+
+    updater-ce-neo published its Windows portable app as
+    ``UpdaterCE-Windows-Portable.zip.zip`` in 2.5.4.  The archive itself is a
+    normal zip, so repeated archive suffixes are collapsed before matching
+    instead of skipping the newer release and silently keeping an older app.
+    """
+
+    text = str(name or "").strip().lower()
+    while text.endswith(".zip.zip"):
+        text = text[: -len(".zip")]
+    return text
+
+
 def output_name(asset_name: str, platform: Platform) -> str:
     return asset_base_name(asset_name) + platform.suffix
 
@@ -849,7 +870,7 @@ def render_notes(
 def legacy_donate_txt(software: str, version: str, firmware_asset: str) -> str:
     """A plain-text note for computers that cannot run Updater CE.
 
-    It is written by every legacy package so a Windows XP/7/8 or 32-bit Linux
+    It is written by every legacy package so a Windows 7/8 or 32-bit Linux
     user still sees where the project can be supported after the install,
     without opening a browser first.  Every URL is spelled out so it also works
     when copied to a machine that is not online.

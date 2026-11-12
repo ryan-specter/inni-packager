@@ -42,6 +42,7 @@ from mirrorspec import (
     Platform,
     fw_package_ini,
     load_config,
+    normalized_asset_name,
     parse_block,
     release_fingerprint,
     release_title,
@@ -115,8 +116,11 @@ def configured_omit_images(cfg: MirrorConfig) -> Tuple[str, ...]:
 def find_updater_asset(
     releases: Sequence[Mapping[str, Any]], platform: Platform
 ) -> Optional[Tuple[Mapping[str, Any], Mapping[str, Any]]]:
-    wanted = {platform.updater_asset.lower()}
-    wanted.update(name.lower() for name in platform.alt_assets)
+    # Upstream sometimes publishes a doubled suffix, such as
+    # ``UpdaterCE-Windows-Portable.zip.zip``.  Compare normalised names so the
+    # newest portable app is used even when its asset was named that way.
+    wanted = {normalized_asset_name(platform.updater_asset)}
+    wanted.update(normalized_asset_name(name) for name in platform.alt_assets)
     for release in releases:
         if release.get("draft"):
             continue
@@ -124,7 +128,7 @@ def find_updater_asset(
         if platform.pinned_tag and tag != platform.pinned_tag:
             continue
         for asset in release.get("assets") or []:
-            if str(asset.get("name") or "").lower() in wanted:
+            if normalized_asset_name(str(asset.get("name") or "")) in wanted:
                 return release, asset
     return None
 
@@ -173,8 +177,8 @@ def resolve_updater_assets(
                 (
                     candidate
                     for candidate in release.get("assets") or []
-                    if str(candidate.get("name") or "").lower()
-                    == platform.driver_asset.lower()
+                    if normalized_asset_name(str(candidate.get("name") or ""))
+                    == normalized_asset_name(platform.driver_asset)
                 ),
                 None,
             )
