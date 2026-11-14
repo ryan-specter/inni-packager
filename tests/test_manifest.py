@@ -253,5 +253,75 @@ class CommentedProductTests(unittest.TestCase):
         self.assertEqual(manifest.product_config(q5)["defaults"]["target_model"], "Q5")
 
 
+DUPLICATE_ATTRIBUTE = """<?xml version="1.0"?>
+<slidia>
+  <package name="Lithium" brand="Timmkoo" repo="NoahDomingues/Lithium" device="Q3" type="img"
+           install_first="y1-community/q3-stock-rom" install_first="y1-community/q3-stock-rom" />
+  <package name="Rondo" repo="jarvissax/rondo" device="Y1" type="img" />
+</slidia>
+"""
+
+BROKEN_XML = """<?xml version="1.0"?>
+<slidia>
+  <package name="Rondo & Rondo" repo="jarvissax/rondo" device="Y1" type="img" />
+  <package name="Rockbox" repo="rockbox-y1/rockbox" device="Y1" type="img" />
+</slidia>
+"""
+
+
+class HandEditedManifestTests(unittest.TestCase):
+    """A defect in the hand-maintained catalogue must not stop packaging.
+
+    Every mirror is dispatched from this manifest.  When it fails to parse,
+    onboarding fails and no portable package is rebuilt at all, so a typo in
+    another repository would silently leave every download stale.
+    """
+
+    def test_a_repeated_attribute_is_repaired_not_fatal(self):
+        with mock.patch("sys.stderr"):
+            packages = manifest.parse_manifest(DUPLICATE_ATTRIBUTE)
+        self.assertEqual([p.repo for p in packages], ["NoahDomingues/Lithium", "jarvissax/rondo"])
+        self.assertEqual(
+            [p.device for p in packages],
+            ["Q3", "Y1"],
+        )
+
+    def test_the_repair_keeps_the_first_value(self):
+        repaired, removed = manifest._repair_duplicate_attributes(
+            '<package repo="a/b" device="Y1" device="Y2" type="img" />'
+        )
+        self.assertEqual(removed, 1)
+        self.assertIn('device="Y1"', repaired)
+        self.assertNotIn('device="Y2"', repaired)
+
+    def test_a_tag_value_may_contain_a_greater_than_sign(self):
+        repaired, removed = manifest._repair_duplicate_attributes(
+            '<package repo="a/b" install_first_version="3.2.0=>" '
+            'install_first_version="3.2.0=>" type="img" />'
+        )
+        self.assertEqual(removed, 1)
+        self.assertIn('install_first_version="3.2.0=>"', repaired)
+
+    def test_commented_rows_are_not_repaired(self):
+        repaired, removed = manifest._repair_duplicate_attributes(
+            '<!-- <package repo="a/b" device="Y1" device="Y1" /> -->'
+        )
+        self.assertEqual(removed, 0)
+        self.assertEqual(repaired.count('device="Y1"'), 2)
+
+    def test_any_other_defect_falls_back_to_the_rows(self):
+        with mock.patch("sys.stderr"):
+            packages = manifest.parse_manifest(BROKEN_XML)
+        self.assertEqual(
+            [p.repo for p in packages],
+            ["jarvissax/rondo", "rockbox-y1/rockbox"],
+        )
+
+    def test_a_manifest_with_no_readable_rows_still_fails(self):
+        with mock.patch("sys.stderr"):
+            with self.assertRaises(ValueError):
+                manifest.parse_manifest("<html><body>not found</body>")
+
+
 if __name__ == "__main__":
     unittest.main()

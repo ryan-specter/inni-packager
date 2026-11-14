@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import re
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -29,7 +30,16 @@ MANIFEST_URLS = tuple(repo_fallback.manifest_urls())
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SAFE_NAME = re.compile(r"[^a-z0-9._-]+")
 _COMMENT_RE = re.compile(r"<!--(.*?)-->", re.DOTALL)
-_PACKAGE_TAG_RE = re.compile(r"<package\b[^>]*?/\s*>", re.DOTALL)
+# Attribute values may contain ``>`` (``install_first_version="3.2.0=>"``), so a
+# tag has to be matched by its quoted values rather than by the first ``>``.
+_ATTRIBUTE_PAIR = r'[A-Za-z_][\w:.-]*\s*=\s*"[^"]*"'
+_PACKAGE_TAG_RE = re.compile(rf"<package\b(?:\s+{_ATTRIBUTE_PAIR})*\s*/\s*>", re.DOTALL)
+_TAG_RE = re.compile(
+    rf"<[A-Za-z_][\w:.-]*(?:\s+{_ATTRIBUTE_PAIR})*\s*/?>", re.DOTALL
+)
+_LEADING_ATTRIBUTE_RE = re.compile(
+    r'\s+([A-Za-z_][\w:.-]*)\s*=\s*"[^"]*"', re.DOTALL
+)
 _ATTRIBUTE_RE = re.compile(r'([A-Za-z_][\w:.-]*)\s*=\s*"([^"]*)"')
 
 
@@ -211,6 +221,28 @@ def _package_from_attributes(attributes: Mapping[str, str]) -> Optional[Manifest
     )
 
 
+def _warn(message: str) -> None:
+    """Report a repaired or tolerated manifest defect without failing a run."""
+
+    sys.stderr.write(f"warning: {message}\n")
+
+
+def _tag_packages(text: str) -> List[ManifestPackage]:
+    """Read ``<package \u2026 />`` rows straight from their tags.
+
+    This is the fallback for a manifest that is not well-formed XML.  It reads
+    the same rows from the same tags, so one broken row cannot take the whole
+    catalogue, and every portable package built from it, offline.
+    """
+
+    packages: List[ManifestPackage] = []
+    for tag in _PACKAGE_TAG_RE.findall(text):
+        package = _package_from_attributes(dict(_ATTRIBUTE_RE.findall(tag)))
+        if package is not None:
+            packages.append(package)
+    return packages
+
+
 def _commented_packages(text: str) -> List[ManifestPackage]:
     """Read the img rows that are commented out in the manifest.
 
@@ -222,11 +254,61 @@ def _commented_packages(text: str) -> List[ManifestPackage]:
 
     packages: List[ManifestPackage] = []
     for comment in _COMMENT_RE.findall(text):
-        for tag in _PACKAGE_TAG_RE.findall(comment):
-            package = _package_from_attributes(dict(_ATTRIBUTE_RE.findall(tag)))
-            if package is not None:
-                packages.append(package)
+        packages.extend(_tag_packages(comment))
     return packages
+
+
+def _repair_duplicate_attributes(text: str) -> Tuple[str, int]:
+    """Drop repeated attributes inside one tag, keeping the first value.
+
+    The catalogue is edited by hand, so a row can end up carrying the same
+    attribute twice.  XML forbids that, but the meaning is unambiguous: the
+    first value is the one the author meant, and both copies usually agree.
+    Failing the parse would fail every mirror at once, so repair the tag.
+    """
+
+    comments = [match.span() for match in _COMMENT_RE.finditer(text)]
+    removed = 0
+
+    def repair_tag(match: re.Match[str]) -> str:
+        if any(start <= match.start() < end for start, end in comments):
+            return match.group(0)
+        seen: set = set()
+
+        def keep(attribute: re.Match[str]) -> str:
+            nonlocal removed
+            name = attribute.group(1).lower()
+            if name in seen:
+                removed += 1
+                return ""
+            seen.add(name)
+            return attribute.group(0)
+
+        return _LEADING_ATTRIBUTE_RE.sub(keep, match.group(0))
+
+    return _TAG_RE.sub(repair_tag, text), removed
+
+
+def _manifest_root(text: str) -> Optional[ElementTree.Element]:
+    """Parse the document, repairing a hand-edited defect when that is enough."""
+
+    try:
+        return ElementTree.fromstring(text)
+    except ElementTree.ParseError as exc:
+        problem = str(exc)
+    repaired, removed = _repair_duplicate_attributes(text)
+    if removed:
+        try:
+            root = ElementTree.fromstring(repaired)
+        except ElementTree.ParseError as exc:
+            problem = str(exc)
+        else:
+            _warn(
+                f"manifest repeats {removed} attribute(s); kept the first value"
+            )
+            return root
+    _warn(f"manifest is not valid XML: {problem}")
+    return None
 
 
 def parse_manifest(
@@ -237,18 +319,24 @@ def parse_manifest(
     ``include_commented`` also returns rows that are commented out, which is
     how the per-model stock ROM repositories are registered before the app
     lists them.  Active rows win when the same row appears both ways.
+
+    The catalogue is maintained by hand in another repository, so a defect in
+    it must not stop packaging: without the manifest no mirror is dispatched
+    and every portable package goes stale.  Duplicate attributes are repaired
+    and any other XML defect falls back to reading the rows from their tags.
     """
 
-    try:
-        root = ElementTree.fromstring(text)
-    except ElementTree.ParseError as exc:
-        raise ValueError(f"manifest is not valid XML: {exc}") from exc
-
-    packages: List[ManifestPackage] = []
-    for element in root.findall("package"):
-        package = _package_from_attributes(element.attrib)
-        if package is not None:
-            packages.append(package)
+    root = _manifest_root(text)
+    if root is None:
+        packages = _tag_packages(_COMMENT_RE.sub("", text))
+        if not packages:
+            raise ValueError("manifest is not valid XML and lists no rows")
+    else:
+        packages: List[ManifestPackage] = []
+        for element in root.findall("package"):
+            package = _package_from_attributes(element.attrib)
+            if package is not None:
+                packages.append(package)
 
     if include_commented:
         seen: set = {
