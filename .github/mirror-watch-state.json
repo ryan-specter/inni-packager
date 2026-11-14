@@ -1,12 +1,12 @@
 {
-  "manifest": "ad8257bc0f58a05dc04bedbb7aed6f1ea42af6b7e5b465b87d5240bd86c6e58a",
+  "manifest": "7514c66f63537c69e06936907f39fe96f7acf12b05e5aa5fd6ac9c7ca4e4730a",
   "products": {
     "classyplayer/classy": "d9724fa801e512dd2b4e06fbaef85dcbd03f08f792c2cc042f3cb236c7b7d6a2",
     "fabianzettl/inniclassic": "dd7856922fc0bf2744631c93cf426f02bb0a22aac4ac6f1dfcd1d9973fdc19db",
     "ismileblue/y1_launcher": "cb334f87e472d7811849e7e21d92db4dadb377ab4eba3027e9544d825f2700ff",
     "jarvissax/rondo": "a30f094ab2d6f36ac2c4ca8d6cd11b08b560df75d39378021afd62792b79806d",
     "leska1337/better-y": "e2ef21a2d7c867aebbd932b0b886e2c1a4024b23d3739a765b44600141d192a1",
-    "please-click/updates-available": "ee56d100bd2076c6d7b41a75aaf82520e2d1259a78b8d1445c1dd88049b4be5f",
+    "noahdomingues/lithium": "31d3252482718f22e70965c65332bde184d033999b2d7cc93584a2773c1c515d",
     "rockbox-y1/rockbox": "63c4f4616b42322bc609eefc4ea123f507893d45fa5e9cd70f018ce34182be6c",
     "ryan-specter/koensayr-auto": "f91edc5583c7697e3fe805abebf669272bc7ea02bdb7d6c29a41957de13075bd",
     "schulzcode/y2linux": "3951c051e2c6d1f2728b5a3c6b35db76b91140ded96418aaf7684019fd369b25",
@@ -33,6 +33,7 @@
     "ismileblue/y1_launcher": "588b6bd35071ea3b3633be53385b8370da1f1a6c000adfa5431b7e8ad44436f7",
     "jarvissax/rondo": "25a85e8c4052402903eb27edb2dbd90927958742f3f4d670e12583d2d2c4eebc",
     "leska1337/better-y": "395a5749e07368d56e2b7396034d1f0a5c69e2885e57f78c8374f556e437a8fd",
+    "noahdomingues/lithium": "cb6b60dacec1b378a0fbf8cd1cedc6b4bf3652ec10505f24ea38d78944727eda",
     "rockbox-y1/rockbox": "9785d7f130dc7b99a0f24420685cb77c1e4edb79928fe2993c38738dd1adf7bf",
     "ryan-specter/koensayr-auto": "7ae03122ff963950d9c40014b42ff894c3fceccd565e856b324ef69ff8d9e236",
     "schulzcode/y2linux": "2559ed6b71d8e7ac87622436cc0ffaebd6ec20ccf784201b9ad074e86d633a96",
