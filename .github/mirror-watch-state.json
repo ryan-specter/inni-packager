@@ -1,5 +1,5 @@
 {
-  "manifest": "68cc2d99d3d0a18b9c3e736df10cf8a13478b8b4e2409e78671b3ca223b3bd21",
+  "manifest": "ad8257bc0f58a05dc04bedbb7aed6f1ea42af6b7e5b465b87d5240bd86c6e58a",
   "products": {
     "classyplayer/classy": "d9724fa801e512dd2b4e06fbaef85dcbd03f08f792c2cc042f3cb236c7b7d6a2",
     "fabianzettl/inniclassic": "dd7856922fc0bf2744631c93cf426f02bb0a22aac4ac6f1dfcd1d9973fdc19db",
@@ -9,7 +9,7 @@
     "please-click/updates-available": "ee56d100bd2076c6d7b41a75aaf82520e2d1259a78b8d1445c1dd88049b4be5f",
     "rockbox-y1/rockbox": "63c4f4616b42322bc609eefc4ea123f507893d45fa5e9cd70f018ce34182be6c",
     "ryan-specter/koensayr-auto": "f91edc5583c7697e3fe805abebf669272bc7ea02bdb7d6c29a41957de13075bd",
-    "schulzcode/y2linux": "29a6cb5615e8fde754ba9fa8e765565cbd5bcc98ad1e6cf1e66910de12d4c2a9",
+    "schulzcode/y2linux": "3951c051e2c6d1f2728b5a3c6b35db76b91140ded96418aaf7684019fd369b25",
     "schulzcode/y2player": "e662df443ab1b1507e59f669668ef575c1c403800868d47e6d13d2a3f390c4e9",
     "spycemagic/y2-rockbox": "715844dd6c17db7353ba931390607d726f3b5a766ce53ebc95ccfdf4663f28df",
     "thesolarproject/solar": "547550fe7234ce0641180e203ef6159cd86bd37a5ae2799ce5e79b0a70d92a23",
@@ -24,18 +24,18 @@
     "y1-community/y2-ata-rom": "c220d1ec25013f985ece8f159d0ca942691712db3ea01c10f3f4982ec8f54963"
   },
   "seeds": {
-    "y1-community/innioasis-updater": "d4e50e3541ddab8ee329cff565103ae2c7d015bd4f13c3a11060b718972e222a",
-    "y1-community/updater-ce-neo": "31fa00dc3add29f8d3694d71212fa46f8650dc3800cde102c7292d15dc3471e5"
+    "y1-community/innioasis-updater": "cac659dbaf3e779a48e9a065555a704d0f8175329313eea0a5d17818b59f7672",
+    "y1-community/updater-ce-neo": "c3c58251b3f505412ddf3299ff3f897e56a689fcebf0b3bb427f0a1e93d316d5"
   },
   "sources": {
-    "classyplayer/classy": "ac63e9d15f8e6658828641d57da12615e86db112aad54cee66c7adc7ab070ac4",
+    "classyplayer/classy": "ff0827814094c7b029e9eaa61601ce8829bc84c4e5f8f67b098e7b260eef326f",
     "fabianzettl/inniclassic": "027b925155706c69175bbc1be9a30c1060edbe6b81362c431abcfa1640c5bcfd",
     "ismileblue/y1_launcher": "588b6bd35071ea3b3633be53385b8370da1f1a6c000adfa5431b7e8ad44436f7",
     "jarvissax/rondo": "25a85e8c4052402903eb27edb2dbd90927958742f3f4d670e12583d2d2c4eebc",
     "leska1337/better-y": "395a5749e07368d56e2b7396034d1f0a5c69e2885e57f78c8374f556e437a8fd",
     "rockbox-y1/rockbox": "9785d7f130dc7b99a0f24420685cb77c1e4edb79928fe2993c38738dd1adf7bf",
     "ryan-specter/koensayr-auto": "7ae03122ff963950d9c40014b42ff894c3fceccd565e856b324ef69ff8d9e236",
-    "schulzcode/y2linux": "bb03a1c31e702b6b4c80c323df2109652123bb4436e40d5134a7e4d72124f52f",
+    "schulzcode/y2linux": "2559ed6b71d8e7ac87622436cc0ffaebd6ec20ccf784201b9ad074e86d633a96",
     "schulzcode/y2player": "4dd8d2c5e7e7ffcd1132ec4cd5bb2a2b2e54fc9eb7a57c219c73a811d96ead97",
     "spycemagic/y2-rockbox": "df59883b877adc749809052f37a24cfd0a0434f8a3c679884d32d8ba87aa7a49",
     "thesolarproject/solar": "135265ca8ae34cde662084df150d75a383005886029feebbbb9ef08eaf9c4321",
@@ -46,7 +46,7 @@
     "y1-community/q5-stock-rom": "cc80ff9d313a028e78e577390ffe10e635cbcb99471d4066d8ecb3cdaf13fc73",
     "y1-community/y1-ata-rom": "1e3ce6141a4fe089e1b38fb4622336ab081234c5c30ad2a377e423a06552c175",
     "y1-community/y1-linux-rom": "f5400440f4fb49dd0e39b3b6320e01ea83fa3e1d055d9209645964fd5a6e568a",
-    "y1-community/y1-stock-rom": "61fca4eff5167350a8d17765c4aad14b8a780c08a23447e4d38e61893000ba8b",
+    "y1-community/y1-stock-rom": "da18d428f76b0a6a60f47c607e5089f426ac7792d6634bfdecba4dc38fc6a133",
     "y1-community/y2-ata-rom": "d8c2f5df188a37231b4478d9cf46d1ec57a6e981f0eaf8552982570bc39167f6"
   },
   "version": 1
