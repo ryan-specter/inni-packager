@@ -131,6 +131,102 @@ class BuildForReleaseTests(unittest.TestCase):
             )
 
 
+class AssetLimitTests(unittest.TestCase):
+    def test_oversized_platform_is_dropped_not_fatal(self):
+        """One variant over the per-asset limit must not sink the release."""
+
+        cfg = mirrorspec.load_config(
+            str(ROOT / "mirror.config.json"),
+            mirror_repo="owner/mirror",
+            platforms=["windows", "linux"],
+            environ={},
+        )
+        # The input firmware must fit; only the generated package is oversized.
+        cfg.max_asset_bytes = 1_000_000
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            firmware = work / "rom.zip"
+            make_zip(
+                firmware,
+                [
+                    ("MT6572_Android_scatter.txt", b"standard", FILE_MODE),
+                    ("boot.img", b"firmware payload " * 400, FILE_MODE),
+                ],
+            )
+            tool = work / "UpdaterCE-Windows-Portable.zip"
+            make_zip(
+                tool,
+                [
+                    ("SP_Flash_Tool/", b"", DIR_MODE),
+                    ("SP_Flash_Tool/flash_tool.exe", b"tool", FILE_MODE),
+                    ("SP_Flash_Tool/MTK_AllInOne_DA.bin", b"da", FILE_MODE),
+                    ("InnioasisUpdater", b"app", FILE_MODE),
+                ],
+            )
+            release = {
+                "tag_name": "1.0",
+                "name": "Test 1.0",
+                "body": "notes",
+                "assets": [
+                    {
+                        "name": "rom.zip",
+                        "size": firmware.stat().st_size,
+                        "id": 1,
+                        "browser_download_url": "https://example.invalid/rom.zip",
+                    }
+                ],
+            }
+
+            class FakeGH:
+                def download(self, repo, asset, dest, log=None):
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(firmware.read_bytes())
+                    return dest
+
+            updater = {
+                key: {
+                    "repo": "owner/updater",
+                    "tag": "2.0",
+                    "name": tool.name,
+                    "size": tool.stat().st_size,
+                    "id": 2,
+                    "url": "https://example.invalid/tool.zip",
+                }
+                for key in ("windows", "linux")
+            }
+            real_build = pm.build_portable_package
+
+            def oversized_linux(*args, **kwargs):
+                result = real_build(*args, **kwargs)
+                platform = kwargs.get("platform") or args[2]
+                if getattr(platform, "key", "") == "linux":
+                    result.size = cfg.max_asset_bytes + 1
+                return result
+
+            from unittest import mock
+
+            with mock.patch.object(pm, "build_portable_package", oversized_linux):
+                result = pm.build_for_release(
+                    cfg,
+                    release,
+                    None,
+                    None,
+                    FakeGH(),
+                    updater,
+                    None,
+                    lambda key: tool,
+                    work,
+                    quiet,
+                    dry_run=True,
+                )
+            self.assertEqual(result["action"], "built-dry-run")
+            self.assertEqual(len(result["assets"]), 1)
+            self.assertTrue(result["assets"][0].endswith("-windows.zip"))
+            self.assertTrue(
+                any("asset limit" in failure for failure in result["failures"])
+            )
+
+
 def quiet(_message):
     return None
 

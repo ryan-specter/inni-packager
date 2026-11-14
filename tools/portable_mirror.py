@@ -959,12 +959,32 @@ def build_for_release(
         results.values(),
         key=lambda r: (str(r.source_asset), [p.key for p in cfg.platforms].index(r.platform)),
     )
+    # One platform can outgrow GitHub's per-asset limit while the others fit
+    # (a large stock ROM plus the arm64 app bundle is the usual case).  Dropping
+    # the oversized variant keeps the release, and every other platform, built;
+    # failing here would leave the whole firmware with no portable package at
+    # all, release after release.
+    oversized: List[str] = []
+    fitting: List[BuildResult] = []
     for result in ordered_results:
         if result.size > cfg.max_asset_bytes:
-            raise PackagingError(
+            reason = (
                 f"{result.path.name} is {result.size} bytes, over the "
                 f"{cfg.max_asset_bytes} byte GitHub asset limit"
             )
+            oversized.append(reason)
+            log(f"  skipping {result.path.name}: {reason}")
+            continue
+        fitting.append(result)
+    if not fitting:
+        return {
+            "tag": tag,
+            "action": "skipped",
+            "reason": "; ".join(oversized) or "no package fits the asset limit",
+            "failures": oversized,
+        }
+    ordered_results = fitting
+    failures.extend(oversized)
 
     expected_names = {r.path.name for r in ordered_results}
     expected_names.update(original_names)
