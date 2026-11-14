@@ -194,7 +194,10 @@ def prepare_baseline(
         for name, total in cumulative.items():
             live = counts.get(name, 0)
             if name in expected:
-                baseline[name] = max(baseline.get(name, 0), total)
+                # A download counted after the last snapshot is not in
+                # stats.txt yet, so keep whichever figure is higher: the
+                # recorded baseline plus the live counter, or the snapshot.
+                baseline[name] = max(baseline.get(name, 0) + live, total)
             elif name in counts:
                 baseline[name] = max(baseline.get(name, 0), max(0, total - live))
             else:

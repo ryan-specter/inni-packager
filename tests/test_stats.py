@@ -111,6 +111,29 @@ class StatsTests(unittest.TestCase):
         self.assertNotIn(STATS_ASSET, baseline)
         self.assertEqual(retired["legacy.zip"], 5)
 
+    def test_prepare_baseline_keeps_downloads_newer_than_the_snapshot(self):
+        # A download counted after the last stats.txt refresh belongs to the
+        # file being replaced; folding only the snapshot drops it silently.
+        existing = [asset("rom-windows.zip", 2)]
+        baseline, _retired = prepare_baseline(
+            {"stats": {"baseline": {}, "retired": {}}},
+            existing,
+            {"rom-windows.zip"},
+            previous_stats={"mirror": {"rom-windows.zip": 1}},
+        )
+        self.assertEqual(baseline["rom-windows.zip"], 2)
+
+    def test_prepare_baseline_does_not_double_count_a_folded_baseline(self):
+        block = {"stats": {"baseline": {"rom-windows.zip": 5}, "retired": {}}}
+        existing = [asset("rom-windows.zip", 2)]
+        baseline, _retired = prepare_baseline(
+            block,
+            existing,
+            {"rom-windows.zip"},
+            previous_stats={"mirror": {"rom-windows.zip": 7}},
+        )
+        self.assertEqual(baseline["rom-windows.zip"], 7)
+
     def test_prepare_baseline_retires_vanished_asset(self):
         block = {"stats": {"baseline": {"gone.zip": 9}, "retired": {}}}
         baseline, retired = prepare_baseline(block, [], set())
