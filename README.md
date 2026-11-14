@@ -22,6 +22,11 @@ seed, or a changed manifest row dispatches only the mirrors that need work.
 The first run dispatches every mirror. State is stored in
 `.github/mirror-watch-state.json` only after a clean apply.
 
+A dispatched mirror then rebuilds only the platform packages whose inputs
+changed: a Windows-only app hotfix replaces the Windows ZIP in every release,
+a firmware hotfix repacks that one release for every platform, and untouched
+packages keep their published files and download history in `stats.txt`.
+
 Onboarding also adds or refreshes the `portable_zips` attribute on matching
 `type="img"` manifest rows, so a new firmware only needs its line in
 `slidia_manifest.xml`. Each mirror also keeps an hourly schedule as a fallback

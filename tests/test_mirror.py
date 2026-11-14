@@ -131,6 +131,261 @@ class BuildForReleaseTests(unittest.TestCase):
             )
 
 
+class PlatformFingerprintTests(unittest.TestCase):
+    def setUp(self):
+        self.cfg = mirrorspec.load_config(
+            str(ROOT / "mirror.config.json"),
+            mirror_repo="owner/mirror",
+            platforms=["windows", "linux"],
+            environ={},
+        )
+        self.release = {
+            "tag_name": "3.1.2",
+            "name": "Test 3.1.2",
+            "assets": [{"name": "rom.zip", "size": 1, "id": 1}],
+        }
+
+    def updater(self, windows=(2, 2), linux=(3, 3)):
+        def item(key, value):
+            return {
+                "tag": f"2.5.{value[0]}",
+                "name": f"{key}.zip",
+                "size": value[1],
+                "id": value[1],
+            }
+
+        return {
+            "windows": item("windows", windows),
+            "linux": item("linux", linux),
+        }
+
+    def fingerprints(self, release=None, updater=None):
+        return mirrorspec.platform_fingerprints(
+            self.cfg, release or self.release, updater or self.updater()
+        )
+
+    def test_only_the_updated_platform_fingerprint_changes(self):
+        before = self.fingerprints()
+        after = self.fingerprints(updater=self.updater(windows=(9, 9)))
+        self.assertNotEqual(before["windows"], after["windows"])
+        self.assertEqual(before["linux"], after["linux"])
+
+    def test_a_firmware_hotfix_invalidates_every_platform(self):
+        before = self.fingerprints()
+        hotfix = dict(self.release)
+        hotfix["assets"] = [{"name": "rom.zip", "size": 2, "id": 2}]
+        after = self.fingerprints(release=hotfix)
+        self.assertNotEqual(before["windows"], after["windows"])
+        self.assertNotEqual(before["linux"], after["linux"])
+
+    def test_stale_platforms_names_only_the_changed_platform(self):
+        fps = self.fingerprints()
+        block = {
+            "v": mirrorspec.BUILDER_VERSION,
+            "platforms": dict(fps),
+            "failures": [],
+        }
+        self.assertEqual(pm.stale_platforms(block, fps), [])
+        changed = dict(fps)
+        changed["windows"] = "new-app"
+        self.assertEqual(pm.stale_platforms(block, changed), ["windows"])
+
+    def test_a_legacy_or_failed_block_rebuilds_every_platform(self):
+        fps = self.fingerprints()
+        self.assertEqual(
+            pm.stale_platforms({"v": mirrorspec.BUILDER_VERSION}, fps),
+            ["linux", "windows"],
+        )
+        failed = {"platforms": dict(fps), "failures": ["windows: boom"]}
+        self.assertEqual(pm.stale_platforms(failed, fps), ["linux", "windows"])
+
+
+class PartialRebuildTests(unittest.TestCase):
+    """One platform's app hotfix replaces one ZIP per release, not every ZIP."""
+
+    def test_one_platform_hotfix_keeps_other_packages_and_stats(self):
+        cfg = mirrorspec.load_config(
+            str(ROOT / "mirror.config.json"),
+            mirror_repo="owner/mirror",
+            platforms=["windows", "linux"],
+            environ={},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            firmware = work / "rom.zip"
+            make_zip(
+                firmware,
+                [
+                    ("MT6572_Android_scatter.txt", b"standard", FILE_MODE),
+                    ("boot.img", b"firmware payload " * 2000, FILE_MODE),
+                ],
+            )
+            tool = work / "UpdaterCE-Windows-Portable.zip"
+            make_zip(
+                tool,
+                [
+                    ("SP_Flash_Tool/", b"", DIR_MODE),
+                    ("SP_Flash_Tool/flash_tool.exe", b"tool", FILE_MODE),
+                    ("SP_Flash_Tool/MTK_AllInOne_DA.bin", b"da", FILE_MODE),
+                    ("InnioasisUpdater", b"app", FILE_MODE),
+                ],
+            )
+            release = {
+                "tag_name": "1.0",
+                "name": "Test 1.0",
+                "body": "notes",
+                "assets": [
+                    {
+                        "name": "rom.zip",
+                        "size": firmware.stat().st_size,
+                        "id": 1,
+                        "browser_download_url": "https://example.invalid/rom.zip",
+                    }
+                ],
+            }
+            updater = {
+                key: {
+                    "repo": "owner/updater",
+                    "tag": "2.0",
+                    "name": tool.name,
+                    "size": tool.stat().st_size,
+                    "id": 2,
+                    "url": "https://example.invalid/tool.zip",
+                }
+                for key in ("windows", "linux")
+            }
+            linux_fp = mirrorspec.platform_fingerprint(
+                cfg, release, "linux", updater["linux"]
+            )
+            block = {
+                "v": mirrorspec.BUILDER_VERSION,
+                "fingerprint": mirrorspec.release_fingerprint(cfg, release, updater),
+                "source_fingerprint": mirrorspec.source_fingerprint(cfg, release),
+                "platforms": {"windows": "old-app", "linux": linux_fp},
+                "assets": [
+                    {
+                        "name": "rom-windows.zip",
+                        "source_asset": "rom.zip",
+                        "platform": "windows",
+                        "size": 999,
+                        "sha256": "old",
+                    },
+                    {
+                        "name": "rom-linux.zip",
+                        "source_asset": "rom.zip",
+                        "platform": "linux",
+                        "size": 500,
+                        "sha256": "old",
+                    },
+                ],
+                "button_assets": [
+                    {"name": "release-button-updater.svg", "size": 10}
+                ],
+                "original_assets": ["rom.zip"],
+                "original_asset_sizes": {"rom.zip": firmware.stat().st_size},
+                "stats": {
+                    "baseline": {"rom-windows.zip": 100},
+                    "retired": {},
+                },
+                "failures": [],
+            }
+            existing = {
+                "tag_name": "1.0",
+                "name": "Portable Flashing Package: Test 1.0",
+                "body": mirrorspec.render_notes(release, block),
+                "assets": [
+                    {
+                        "name": "rom-windows.zip",
+                        "size": 999,
+                        "state": "uploaded",
+                        "download_count": 250,
+                    },
+                    {
+                        "name": "rom-linux.zip",
+                        "size": 500,
+                        "state": "uploaded",
+                        "download_count": 10,
+                    },
+                    {
+                        "name": "rom.zip",
+                        "size": firmware.stat().st_size,
+                        "state": "uploaded",
+                        "download_count": 7,
+                    },
+                    {
+                        "name": "release-button-updater.svg",
+                        "size": 10,
+                        "state": "uploaded",
+                    },
+                    {"name": "stats.txt", "size": 100, "state": "uploaded"},
+                ],
+            }
+
+            class FakeGH:
+                def __init__(self):
+                    self.uploads = []
+
+                def download(self, repo, asset, dest, log=None):
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    if asset["name"] == "stats.txt":
+                        dest.write_text(
+                            "Portable Flashing Package statistics\n",
+                            encoding="utf-8",
+                        )
+                    else:
+                        dest.write_bytes(firmware.read_bytes())
+                    return dest
+
+                def ensure_release(self, repo, tag, title, notes_path, log=None):
+                    return {}
+
+                def upload(self, repo, tag, paths, log=None):
+                    self.uploads.extend(path.name for path in paths)
+                    return {"uploaded": len(paths), "skipped": 0}
+
+            gh = FakeGH()
+            result = pm.build_for_release(
+                cfg,
+                release,
+                existing,
+                block,
+                gh,
+                updater,
+                None,
+                lambda key: tool,
+                work,
+                quiet,
+                dry_run=False,
+                rebuild_platforms=["windows"],
+            )
+            self.assertEqual(result["action"], "built")
+            self.assertEqual(result["assets"], ["rom-windows.zip"])
+            self.assertEqual(result["kept_assets"], ["rom-linux.zip"])
+            # The Linux package and the stored firmware are not re-uploaded.
+            self.assertEqual(sorted(gh.uploads), ["rom-windows.zip", "stats.txt"])
+            names = sorted(item["name"] for item in result["block"]["assets"])
+            self.assertEqual(names, ["rom-linux.zip", "rom-windows.zip"])
+            self.assertEqual(result["block"]["platforms"]["linux"], linux_fp)
+            self.assertNotEqual(result["block"]["platforms"]["windows"], "old-app")
+            # Replacing the Windows ZIP folds its retired 100 and the 250
+            # downloads the replaced file had into one running total; the
+            # untouched Linux count is not disturbed.
+            self.assertEqual(
+                result["block"]["stats"]["baseline"]["rom-windows.zip"], 350
+            )
+            self.assertNotIn(
+                "rom-linux.zip", result["block"]["stats"]["baseline"]
+            )
+            stats_text = (work / "1.0" / "stats.txt").read_text(encoding="utf-8")
+            self.assertIn("rom-linux.zip", stats_text)
+            self.assertIn("rom-windows.zip", stats_text)
+            entry = pm.build_index_entry(cfg, release, result["block"])
+            self.assertEqual(
+                sorted(item["name"] for item in entry["assets"]),
+                ["rom-linux.zip", "rom-windows.zip"],
+            )
+
+
 class AssetLimitTests(unittest.TestCase):
     def test_oversized_platform_is_dropped_not_fatal(self):
         """One variant over the per-asset limit must not sink the release."""

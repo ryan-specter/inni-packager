@@ -251,14 +251,49 @@ generated buttons followed by the original notes. It records:
 
 - `fingerprint`: hash of builder version, relevant config, every source asset
   (name/size/id) and the exact updater asset per platform
+- `platforms`: one fingerprint per platform, covering that platform's portable
+  app plus the source assets, so a single platform can be judged stale alone
+- `source_fingerprint`: the source files behind the release; when it is
+  unchanged the stored original assets are neither downloaded nor re-uploaded
 - `assets`: output name, source asset, platform, size, SHA-256
 - `original_assets`: copied source asset names
 - `skipped`: firmware candidates rejected by the scatter check
 - `stats`: cumulative download ledger (`baseline`, `retired`)
 
-A run skips a release when the fingerprint matches and every recorded asset is
-still present at the recorded size. This makes reruns cheap and makes partial
-uploads visible: a missing or truncated asset forces a rebuild.
+A run skips a release when every platform fingerprint matches and every
+recorded asset is still present at the recorded size. This makes reruns cheap
+and makes partial uploads visible: a missing or truncated asset forces a
+rebuild.
+
+### Selective rebuilds
+
+A release is rebuilt platform by platform. The Windows/Linux/macOS app assets
+are fingerprinted separately, so the packaging cost follows the change:
+
+| What changed upstream | What is repackaged |
+| --- | --- |
+| one platform's portable app (new release, or replaced bytes under the same tag) | that platform's ZIP in every mirrored release |
+| every platform's portable app | every package in every mirrored release |
+| one firmware ZIP (new release or hotfix) | every platform for that one release |
+| a firmware release added upstream | one new mirror release, built from the current app per platform |
+| release notes or the README | nothing; only the notes and index refresh |
+
+Packages that are not stale are left published exactly as they are. Their
+`stats.txt` lines keep counting, and `assets` in the build record carries the
+unchanged entries forward so the release and `index.json` still list every
+platform. A build record written before `platforms` existed is compared as a
+whole and stays current until its next rebuild, so upgrading the builder does
+not repackage every release at once.
+
+Replacing a file is where `stats.txt` matters: before a ZIP is uploaded over
+an existing one, its current `download_count` is folded into the ledger, so the
+retired downloads stay in the totals and in `[Breakdown]` instead of resetting
+to zero with the new asset. The other platforms' live counters are untouched.
+
+`.github/workflows/onboard.yml` polls the source repositories and the portable
+app seed repositories every 15 minutes and dispatches a mirror as soon as any
+release asset changes, including a replaced asset under an existing tag. The
+mirrors also run hourly as a fallback.
 
 `index.json` is generated from these blocks, so it can be rebuilt from the
 releases alone if it is ever lost.

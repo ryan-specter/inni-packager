@@ -44,6 +44,7 @@ from mirrorspec import (
     load_config,
     normalized_asset_name,
     parse_block,
+    platform_fingerprints,
     release_fingerprint,
     release_title,
     release_version,
@@ -51,6 +52,7 @@ from mirrorspec import (
     resolve_metadata,
     output_name,
     select_firmware_assets,
+    source_fingerprint,
     strip_block,
 )
 from packager import (
@@ -308,16 +310,60 @@ def mirror_source_releases(
     return releases
 
 
+def stale_platforms(
+    block: Optional[Mapping[str, Any]],
+    fingerprints: Mapping[str, str],
+) -> List[str]:
+    """Platforms whose published package no longer matches its inputs.
+
+    A build record written before per-platform fingerprints existed, or one
+    that failed part way, has to be rebuilt in full.  Otherwise only the
+    platforms whose portable app (or firmware) actually changed are stale, so
+    a Windows hotfix does not repackage the Linux and macOS variants of every
+    release.
+    """
+
+    if not block or block.get("failures"):
+        return sorted(fingerprints)
+    recorded = block.get("platforms")
+    if not isinstance(recorded, Mapping) or not recorded:
+        return sorted(fingerprints)
+    return sorted(
+        key
+        for key, value in fingerprints.items()
+        if recorded.get(key) != value
+    )
+
+
 def block_is_current(
     cfg: MirrorConfig,
     release: Mapping[str, Any],
     existing: Optional[Mapping[str, Any]],
     block: Optional[Mapping[str, Any]],
     fingerprint: str,
+    platform_fps: Optional[Mapping[str, str]] = None,
 ) -> bool:
     if not existing or not block:
         return False
-    if block.get("v") != BUILDER_VERSION or block.get("fingerprint") != fingerprint:
+    if block.get("v") != BUILDER_VERSION:
+        return False
+    recorded_platforms = block.get("platforms")
+    if (
+        platform_fps is not None
+        and isinstance(recorded_platforms, Mapping)
+        and recorded_platforms
+    ):
+        # Every platform's package is checked against its own inputs, so a
+        # Windows-only app hotfix leaves the Linux and macOS packages alone.
+        if any(
+            recorded_platforms.get(key) != value
+            for key, value in platform_fps.items()
+        ):
+            return False
+    elif block.get("fingerprint") != fingerprint:
+        # A build record from before per-platform fingerprints can only be
+        # compared as a whole; it is left current until its next rebuild, so
+        # upgrading the builder does not repackage every release at once.
         return False
     if block.get("failures"):
         # A partial build must be retried even though the assets that did
@@ -428,8 +474,10 @@ def review_release(
                 item["changed"].append(name)
 
     fingerprint = release_fingerprint(cfg, release, updater)
-    if not block_is_current(cfg, release, existing, block, fingerprint):
+    platform_fps = platform_fingerprints(cfg, release, updater)
+    if not block_is_current(cfg, release, existing, block, fingerprint, platform_fps):
         item["state"] = "needs-build"
+        item["platforms"] = stale_platforms(block, platform_fps)
     elif item["missing"]:
         item["state"] = "missing-assets"
     elif item["changed"]:
@@ -769,11 +817,56 @@ def build_for_release(
     copy_originals: bool = True,
     keep_stats: bool = False,
     ensure_driver: Optional[Callable[[str], Optional[Path]]] = None,
+    rebuild_platforms: Optional[Sequence[str]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Download, repackage and upload one release.  Returns a report entry."""
+    """Download, repackage and upload one release.  Returns a report entry.
+
+    ``rebuild_platforms`` limits the rebuild to the platforms whose inputs
+    changed.  Packages for every other platform stay published exactly as they
+    are, so a single portable-app hotfix replaces one ZIP per release instead
+    of every ZIP in every release, and the untouched assets keep their live
+    download counters.
+    """
 
     tag = release_tag(release)
     version = release_version(tag, str(release.get("name") or ""))
+    recorded_assets = [
+        dict(item)
+        for item in ((existing_block or {}).get("assets") or [])
+        if isinstance(item, Mapping) and item.get("name")
+    ]
+    live_assets = {
+        str(item.get("name")): item
+        for item in (existing or {}).get("assets") or []
+        if isinstance(item, Mapping)
+    }
+    rebuild = (
+        {platform.key for platform in cfg.platforms}
+        if rebuild_platforms is None
+        else {str(key) for key in rebuild_platforms}
+    )
+    kept_assets: List[Dict[str, Any]] = []
+    for platform in cfg.platforms:
+        if platform.key in rebuild or platform.key not in updater:
+            continue
+        recorded = [
+            item
+            for item in recorded_assets
+            if str(item.get("platform") or "") == platform.key
+        ]
+        still_published = all(
+            str(item.get("name")) in live_assets
+            and int(live_assets[str(item.get("name"))].get("size") or 0)
+            == int(item.get("size") or 0)
+            for item in recorded
+        )
+        if recorded and still_published:
+            kept_assets.extend(recorded)
+            log(f"  keeping {len(recorded)} unchanged {platform.key} package(s)")
+        else:
+            # A recorded package that vanished or changed size has to be
+            # rebuilt; the release would otherwise advertise a broken link.
+            rebuild.add(platform.key)
     source_assets = list(release.get("assets") or [])
     candidates = select_firmware_assets(source_assets, cfg)
     log(f"  firmware assets: {', '.join(str(a['name']) for a in candidates) or '(none)'}")
@@ -824,7 +917,24 @@ def build_for_release(
     original_files: List[Tuple[str, Path]] = []
     original_asset_sizes: Dict[str, int] = {}
     original_names: List[str] = []
-    if cfg.copy_original_assets and copy_originals:
+    source_fp = source_fingerprint(cfg, release)
+    reuse_originals = False
+    if cfg.copy_original_assets and copy_originals and existing_block:
+        recorded_names = [
+            str(name) for name in existing_block.get("original_assets") or []
+        ]
+        recorded_sizes = existing_block.get("original_asset_sizes")
+        if not isinstance(recorded_sizes, Mapping):
+            recorded_sizes = {}
+        reuse_originals = str(
+            existing_block.get("source_fingerprint") or ""
+        ) == source_fp and bool(recorded_names) and all(
+            str(name) in live_assets
+            and int(live_assets[str(name)].get("size") or 0)
+            == int(recorded_sizes.get(name) or -1)
+            for name in recorded_names
+        )
+    if cfg.copy_original_assets and copy_originals and not reuse_originals:
         original_dir = work / tag / "original"
         original_src = original_dir / "src"
         original_out = original_dir / "out"
@@ -863,10 +973,13 @@ def build_for_release(
             original_asset_sizes[name] = upload_path.stat().st_size
         original_names = [name for name, _ in original_files]
     else:
-        # Re-packing an existing mirror release: the firmware inputs are the
-        # originals already stored on the mirror, so they are neither
+        # Re-packing an existing mirror release, or rebuilding packages for a
+        # portable app that changed while the firmware did not: the original
+        # assets are already stored on the mirror, so they are neither
         # downloaded again nor re-uploaded.  Keep the recorded names so the
         # build record and the index still describe them.
+        if reuse_originals:
+            log("  firmware unchanged: keeping stored original assets")
         original_names = [
             str(name) for name in (existing_block or {}).get("original_assets") or []
         ]
@@ -890,7 +1003,7 @@ def build_for_release(
             description=meta["description"] or str(release.get("name") or ""),
         )
         for platform in cfg.platforms:
-            if platform.key not in updater:
+            if platform.key not in updater or platform.key not in rebuild:
                 continue
             tasks.append(
                 (
@@ -987,7 +1100,7 @@ def build_for_release(
     failures.extend(oversized)
 
     expected_names = {r.path.name for r in ordered_results}
-    expected_names.update(original_names)
+    expected_names.update(name for name, _path in original_files)
     expected_names.add(STATS_ASSET)
     stats: Optional[StatsReport] = None
     stats_path: Optional[Path] = None
@@ -1018,7 +1131,13 @@ def build_for_release(
         stats_path.parent.mkdir(parents=True, exist_ok=True)
         stats_path.write_text(stats.text, encoding="utf-8")
 
-    used_platforms = [r.platform for r in ordered_results]
+    rebuilt_platforms = {r.platform for r in ordered_results}
+    kept_platforms = {str(item.get("platform") or "") for item in kept_assets}
+    used_platforms = [
+        platform.key
+        for platform in cfg.platforms
+        if platform.key in rebuilt_platforms or platform.key in kept_platforms
+    ]
     button_paths = release_notes.write_button_assets(
         work / tag / "buttons", used_platforms
     )
@@ -1026,31 +1145,54 @@ def build_for_release(
         {"name": path.name, "size": path.stat().st_size} for path in button_paths
     ]
 
+    asset_entries: List[Dict[str, Any]] = [
+        {
+            "name": r.path.name,
+            "source_asset": r.source_asset,
+            "platform": r.platform,
+            "model": meta_by_source.get(r.source_asset, {}).get("target_model", ""),
+            "type": meta_by_source.get(r.source_asset, {}).get("target_type", ""),
+            "size": r.size,
+            "sha256": r.sha256,
+        }
+        for r in ordered_results
+    ] + [dict(item) for item in kept_assets]
+    platform_order = [platform.key for platform in cfg.platforms]
+    asset_entries.sort(
+        key=lambda item: (
+            str(item.get("source_asset") or ""),
+            platform_order.index(str(item.get("platform") or ""))
+            if str(item.get("platform") or "") in platform_order
+            else len(platform_order),
+        )
+    )
+
+    recorded_updater = (existing_block or {}).get("updater")
+    if not isinstance(recorded_updater, Mapping):
+        recorded_updater = {}
+    updater_block: Dict[str, Any] = {
+        key: {
+            "tag": info.get("tag"),
+            "name": info.get("name"),
+            "size": info.get("size"),
+            "driver": info.get("driver"),
+        }
+        for key, info in sorted(updater.items())
+    }
+    for key in kept_platforms:
+        if key and key not in updater_block and isinstance(
+            recorded_updater.get(key), Mapping
+        ):
+            updater_block[key] = dict(recorded_updater[key])
+
     block = {
         "v": BUILDER_VERSION,
         "fingerprint": release_fingerprint(cfg, release, updater),
+        "source_fingerprint": source_fp,
         "built_at": utcnow(),
-        "updater": {
-            key: {
-                "tag": info.get("tag"),
-                "name": info.get("name"),
-                "size": info.get("size"),
-                "driver": info.get("driver"),
-            }
-            for key, info in sorted(updater.items())
-        },
-        "assets": [
-            {
-                "name": r.path.name,
-                "source_asset": r.source_asset,
-                "platform": r.platform,
-                "model": meta_by_source.get(r.source_asset, {}).get("target_model", ""),
-                "type": meta_by_source.get(r.source_asset, {}).get("target_type", ""),
-                "size": r.size,
-                "sha256": r.sha256,
-            }
-            for r in ordered_results
-        ],
+        "updater": updater_block,
+        "platforms": platform_fingerprints(cfg, release, updater),
+        "assets": asset_entries,
         "button_assets": button_entries,
         "original_assets": original_names,
         "original_asset_sizes": original_asset_sizes,
@@ -1095,6 +1237,8 @@ def build_for_release(
         "action": action,
         "title": title,
         "assets": [r.path.name for r in ordered_results],
+        "kept_assets": [str(item.get("name")) for item in kept_assets],
+        "platforms": used_platforms,
         "original_assets": original_names,
         "stats": stats.totals if stats else dict((existing_block or {}).get("stats") or {}),
         "block": block,
@@ -1426,8 +1570,11 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
             if cfg.mirror_repo:
                 existing = gh.get_release_by_tag(cfg.mirror_repo, tag)
             fingerprint = release_fingerprint(cfg, release, updater)
+            platform_fps = platform_fingerprints(cfg, release, updater)
             block = parse_block(existing.get("body")) if existing else None
-            if not args.force and block_is_current(cfg, release, existing, block, fingerprint):
+            if not args.force and block_is_current(
+                cfg, release, existing, block, fingerprint, platform_fps
+            ):
                 log(f"  up to date ({len(block.get('assets') or [])} package(s))")
                 # Older builds appended a visible footer.  Refresh just the
                 # notes so current releases get the original body back without
@@ -1492,6 +1639,13 @@ def sync(args, sink: Optional[Callable[[str], None]] = None) -> int:
                     keep_stats=mirror_source
                     or bool(getattr(args, "skip_stats", False)),
                     ensure_driver=ensure_driver,
+                    # Only the platforms whose portable app or firmware
+                    # changed are rebuilt; the rest of the release is kept.
+                    rebuild_platforms=(
+                        None
+                        if args.force
+                        else stale_platforms(block, platform_fps)
+                    ),
                 )
             except (GitHubError, ApiError, PackagingError, OSError) as exc:
                 log(f"  FAILED: {exc}")
@@ -1697,9 +1851,16 @@ def status(args) -> int:
         existing = gh.get_release_by_tag(cfg.mirror_repo, tag) if cfg.mirror_repo else None
         block = parse_block(existing.get("body")) if existing else None
         fingerprint = release_fingerprint(cfg, release, updater)
+        platform_fps = platform_fingerprints(cfg, release, updater)
         state = "missing"
         if existing:
-            state = "current" if block_is_current(cfg, release, existing, block, fingerprint) else "stale"
+            state = (
+                "current"
+                if block_is_current(
+                    cfg, release, existing, block, fingerprint, platform_fps
+                )
+                else "stale"
+            )
         print(f"{tag:<32} {state}")
     return 0
 

@@ -777,6 +777,101 @@ def config_fingerprint(cfg: MirrorConfig) -> str:
     ).hexdigest()
 
 
+def _source_payload(
+    cfg: MirrorConfig, release: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """The source side of a build: which files went into a release."""
+
+    return {
+        "repo": cfg.source_repo,
+        "tag": str(release.get("tag_name") or ""),
+        "name": str(release.get("name") or ""),
+        "assets": sorted(
+            (
+                {
+                    "name": str(a.get("name") or ""),
+                    "size": int(a.get("size") or 0),
+                    "id": a.get("id"),
+                    "digest": str(a.get("digest") or ""),
+                    "updated_at": str(a.get("updated_at") or ""),
+                }
+                for a in release.get("assets", [])
+            ),
+            key=lambda a: a["name"],
+        ),
+    }
+
+
+def _updater_payload(value: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not value:
+        return None
+    return {
+        "tag": value.get("tag"),
+        "name": value.get("name"),
+        "size": value.get("size"),
+        "id": value.get("id"),
+        "digest": value.get("digest"),
+        "updated_at": value.get("updated_at"),
+        "driver": value.get("driver"),
+    }
+
+
+def _hash(payload: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def source_fingerprint(cfg: MirrorConfig, release: Mapping[str, Any]) -> str:
+    """Identify the source files behind a mirror release.
+
+    A changed value means the firmware itself was replaced, so the stored
+    copies of the original assets must be refreshed too.  A platform-only
+    portable-app update leaves it untouched, and the stored originals (and
+    their download history) are left alone.
+    """
+
+    return _hash({"v": BUILDER_VERSION, "source": _source_payload(cfg, release)})
+
+
+def platform_fingerprint(
+    cfg: MirrorConfig,
+    release: Mapping[str, Any],
+    platform_key: str,
+    updater_asset: Optional[Mapping[str, Any]],
+) -> str:
+    """Identify the inputs behind one platform's package for one release.
+
+    Only that platform's portable app is included, so a new Windows app build
+    does not invalidate the Linux or macOS packages (or the stored firmware).
+    A changed firmware asset does invalidate every platform, which is correct:
+    each of them repacks that same ZIP.
+    """
+
+    return _hash(
+        {
+            "v": BUILDER_VERSION,
+            "config": config_fingerprint(cfg),
+            "source": _source_payload(cfg, release),
+            "platform": str(platform_key),
+            "updater": _updater_payload(updater_asset),
+        }
+    )
+
+
+def platform_fingerprints(
+    cfg: MirrorConfig,
+    release: Mapping[str, Any],
+    updater_assets: Mapping[str, Mapping[str, Any]],
+) -> Dict[str, str]:
+    """Fingerprint every platform that currently has a usable portable app."""
+
+    return {
+        key: platform_fingerprint(cfg, release, key, value)
+        for key, value in sorted(updater_assets.items())
+    }
+
+
 def release_fingerprint(
     cfg: MirrorConfig,
     release: Mapping[str, Any],
@@ -784,44 +879,17 @@ def release_fingerprint(
 ) -> str:
     """Identify the exact inputs behind a built mirror release."""
 
-    source_assets = sorted(
-        (
-            {
-                "name": str(a.get("name") or ""),
-                "size": int(a.get("size") or 0),
-                "id": a.get("id"),
-                "digest": str(a.get("digest") or ""),
-                "updated_at": str(a.get("updated_at") or ""),
-            }
-            for a in release.get("assets", [])
-        ),
-        key=lambda a: a["name"],
+    return _hash(
+        {
+            "v": BUILDER_VERSION,
+            "config": config_fingerprint(cfg),
+            "source": _source_payload(cfg, release),
+            "updater": {
+                key: _updater_payload(value)
+                for key, value in sorted(updater_assets.items())
+            },
+        }
     )
-    payload = {
-        "v": BUILDER_VERSION,
-        "config": config_fingerprint(cfg),
-        "source": {
-            "repo": cfg.source_repo,
-            "tag": str(release.get("tag_name") or ""),
-            "name": str(release.get("name") or ""),
-            "assets": source_assets,
-        },
-        "updater": {
-            key: {
-                "tag": value.get("tag"),
-                "name": value.get("name"),
-                "size": value.get("size"),
-                "id": value.get("id"),
-                "digest": value.get("digest"),
-                "updated_at": value.get("updated_at"),
-                "driver": value.get("driver"),
-            }
-            for key, value in sorted(updater_assets.items())
-        },
-    }
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
 
 
 _BLOCK_RE = re.compile(r"<!--\s*portable-mirror:(\{.*?\})\s*-->", re.DOTALL)
