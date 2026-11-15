@@ -1,5 +1,5 @@
 {
-  "manifest": "7514c66f63537c69e06936907f39fe96f7acf12b05e5aa5fd6ac9c7ca4e4730a",
+  "manifest": "80b1d12455147a3785536492c53f116010f90f9fdf459fa6bc6e20b25915c2fe",
   "products": {
     "classyplayer/classy": "d9724fa801e512dd2b4e06fbaef85dcbd03f08f792c2cc042f3cb236c7b7d6a2",
     "fabianzettl/inniclassic": "dd7856922fc0bf2744631c93cf426f02bb0a22aac4ac6f1dfcd1d9973fdc19db",
@@ -10,7 +10,6 @@
     "rockbox-y1/rockbox": "63c4f4616b42322bc609eefc4ea123f507893d45fa5e9cd70f018ce34182be6c",
     "ryan-specter/koensayr-auto": "f91edc5583c7697e3fe805abebf669272bc7ea02bdb7d6c29a41957de13075bd",
     "schulzcode/y2linux": "3951c051e2c6d1f2728b5a3c6b35db76b91140ded96418aaf7684019fd369b25",
-    "schulzcode/y2player": "e662df443ab1b1507e59f669668ef575c1c403800868d47e6d13d2a3f390c4e9",
     "spycemagic/y2-rockbox": "715844dd6c17db7353ba931390607d726f3b5a766ce53ebc95ccfdf4663f28df",
     "thesolarproject/solar": "547550fe7234ce0641180e203ef6159cd86bd37a5ae2799ce5e79b0a70d92a23",
     "y1-community/g1-stock-rom": "568ec609403624f5ead621fed69f418922b8c214d793976004e37f46c21b1c48",
@@ -28,16 +27,15 @@
     "y1-community/updater-ce-neo": "c3c58251b3f505412ddf3299ff3f897e56a689fcebf0b3bb427f0a1e93d316d5"
   },
   "sources": {
-    "classyplayer/classy": "ff0827814094c7b029e9eaa61601ce8829bc84c4e5f8f67b098e7b260eef326f",
+    "classyplayer/classy": "f7a6ab426094d92929c2a67e08268bf8e6e799d122f040925cd610ad8d542d8a",
     "fabianzettl/inniclassic": "027b925155706c69175bbc1be9a30c1060edbe6b81362c431abcfa1640c5bcfd",
     "ismileblue/y1_launcher": "588b6bd35071ea3b3633be53385b8370da1f1a6c000adfa5431b7e8ad44436f7",
-    "jarvissax/rondo": "a1118a69eaa2d51c331b3ecebdd695e82c35f1af84a97368cea458ea7ac2e38e",
+    "jarvissax/rondo": "6cc5f27cc09e16fb2cf9274bab4fec10164d7082e3243c94c69af0d961115687",
     "leska1337/better-y": "395a5749e07368d56e2b7396034d1f0a5c69e2885e57f78c8374f556e437a8fd",
     "noahdomingues/lithium": "cb6b60dacec1b378a0fbf8cd1cedc6b4bf3652ec10505f24ea38d78944727eda",
     "rockbox-y1/rockbox": "9785d7f130dc7b99a0f24420685cb77c1e4edb79928fe2993c38738dd1adf7bf",
     "ryan-specter/koensayr-auto": "7ae03122ff963950d9c40014b42ff894c3fceccd565e856b324ef69ff8d9e236",
     "schulzcode/y2linux": "2559ed6b71d8e7ac87622436cc0ffaebd6ec20ccf784201b9ad074e86d633a96",
-    "schulzcode/y2player": "4dd8d2c5e7e7ffcd1132ec4cd5bb2a2b2e54fc9eb7a57c219c73a811d96ead97",
     "spycemagic/y2-rockbox": "df59883b877adc749809052f37a24cfd0a0434f8a3c679884d32d8ba87aa7a49",
     "thesolarproject/solar": "135265ca8ae34cde662084df150d75a383005886029feebbbb9ef08eaf9c4321",
     "y1-community/g1-stock-rom": "65ed4ac33f4074502c0dadf9e07052d7a79fae1dedaf6551d12a2aac674b1d2e",
