@@ -1,9 +1,9 @@
 {
-  "manifest": "80b1d12455147a3785536492c53f116010f90f9fdf459fa6bc6e20b25915c2fe",
+  "manifest": "ba3c87501ca29085fd2792c359d44875c8cbe156351bbb2388951d61ecebdf8b",
   "products": {
     "classyplayer/classy": "d9724fa801e512dd2b4e06fbaef85dcbd03f08f792c2cc042f3cb236c7b7d6a2",
     "fabianzettl/inniclassic": "dd7856922fc0bf2744631c93cf426f02bb0a22aac4ac6f1dfcd1d9973fdc19db",
-    "ismileblue/y1_launcher": "cb334f87e472d7811849e7e21d92db4dadb377ab4eba3027e9544d825f2700ff",
+    "ismileblue/y1_launcher": "d610a7003ec94de8f11518dfea761f5ca7f3e63d6376dfebfe750bb015717ca9",
     "jarvissax/rondo": "a30f094ab2d6f36ac2c4ca8d6cd11b08b560df75d39378021afd62792b79806d",
     "leska1337/better-y": "e2ef21a2d7c867aebbd932b0b886e2c1a4024b23d3739a765b44600141d192a1",
     "noahdomingues/lithium": "31d3252482718f22e70965c65332bde184d033999b2d7cc93584a2773c1c515d",
@@ -27,7 +27,7 @@
     "y1-community/updater-ce-neo": "c3c58251b3f505412ddf3299ff3f897e56a689fcebf0b3bb427f0a1e93d316d5"
   },
   "sources": {
-    "classyplayer/classy": "d579dbc4f85ba91e58213a6ffebf08839223dca174f2597965d4d8432cf85088",
+    "classyplayer/classy": "0d79341592441c5684afc859ec6fb8c56001e02f2c19a4e6a5ab4db3aa14fd19",
     "fabianzettl/inniclassic": "027b925155706c69175bbc1be9a30c1060edbe6b81362c431abcfa1640c5bcfd",
     "ismileblue/y1_launcher": "588b6bd35071ea3b3633be53385b8370da1f1a6c000adfa5431b7e8ad44436f7",
     "jarvissax/rondo": "29b971310ab187c9c66ad44eb1a7f35fe6fad0998c304c968510db67a901182f",
@@ -35,7 +35,7 @@
     "noahdomingues/lithium": "cb6b60dacec1b378a0fbf8cd1cedc6b4bf3652ec10505f24ea38d78944727eda",
     "rockbox-y1/rockbox": "9785d7f130dc7b99a0f24420685cb77c1e4edb79928fe2993c38738dd1adf7bf",
     "ryan-specter/koensayr-auto": "7ae03122ff963950d9c40014b42ff894c3fceccd565e856b324ef69ff8d9e236",
-    "schulzcode/y2linux": "2559ed6b71d8e7ac87622436cc0ffaebd6ec20ccf784201b9ad074e86d633a96",
+    "schulzcode/y2linux": "3ef66ddd1207cdcad60dd088e1e3f3ecc2050265578c2f4719b3672326b2e5af",
     "spycemagic/y2-rockbox": "df59883b877adc749809052f37a24cfd0a0434f8a3c679884d32d8ba87aa7a49",
     "thesolarproject/solar": "135265ca8ae34cde662084df150d75a383005886029feebbbb9ef08eaf9c4321",
     "y1-community/g1-stock-rom": "65ed4ac33f4074502c0dadf9e07052d7a79fae1dedaf6551d12a2aac674b1d2e",
