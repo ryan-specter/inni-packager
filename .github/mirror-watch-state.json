@@ -1,5 +1,5 @@
 {
-  "manifest": "ba3c87501ca29085fd2792c359d44875c8cbe156351bbb2388951d61ecebdf8b",
+  "manifest": "0386b2e12edf3885d43bb5bb2c102c9d83a6e4fce232abde616376163cb60f07",
   "products": {
     "classyplayer/classy": "d9724fa801e512dd2b4e06fbaef85dcbd03f08f792c2cc042f3cb236c7b7d6a2",
     "fabianzettl/inniclassic": "dd7856922fc0bf2744631c93cf426f02bb0a22aac4ac6f1dfcd1d9973fdc19db",
@@ -10,6 +10,7 @@
     "rockbox-y1/rockbox": "63c4f4616b42322bc609eefc4ea123f507893d45fa5e9cd70f018ce34182be6c",
     "ryan-specter/koensayr-auto": "f91edc5583c7697e3fe805abebf669272bc7ea02bdb7d6c29a41957de13075bd",
     "schulzcode/y2linux": "3951c051e2c6d1f2728b5a3c6b35db76b91140ded96418aaf7684019fd369b25",
+    "schulzcode/y2player": "e662df443ab1b1507e59f669668ef575c1c403800868d47e6d13d2a3f390c4e9",
     "spycemagic/y2-rockbox": "715844dd6c17db7353ba931390607d726f3b5a766ce53ebc95ccfdf4663f28df",
     "thesolarproject/solar": "547550fe7234ce0641180e203ef6159cd86bd37a5ae2799ce5e79b0a70d92a23",
     "y1-community/g1-stock-rom": "568ec609403624f5ead621fed69f418922b8c214d793976004e37f46c21b1c48",
@@ -36,6 +37,7 @@
     "rockbox-y1/rockbox": "9785d7f130dc7b99a0f24420685cb77c1e4edb79928fe2993c38738dd1adf7bf",
     "ryan-specter/koensayr-auto": "7ae03122ff963950d9c40014b42ff894c3fceccd565e856b324ef69ff8d9e236",
     "schulzcode/y2linux": "c478b06aab3b429f241bec6e5127cc3967bd052681aa5ff370dec57753b7d29c",
+    "schulzcode/y2player": "4dd8d2c5e7e7ffcd1132ec4cd5bb2a2b2e54fc9eb7a57c219c73a811d96ead97",
     "spycemagic/y2-rockbox": "df59883b877adc749809052f37a24cfd0a0434f8a3c679884d32d8ba87aa7a49",
     "thesolarproject/solar": "135265ca8ae34cde662084df150d75a383005886029feebbbb9ef08eaf9c4321",
     "y1-community/g1-stock-rom": "65ed4ac33f4074502c0dadf9e07052d7a79fae1dedaf6551d12a2aac674b1d2e",
