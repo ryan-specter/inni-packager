@@ -1,7 +1,7 @@
 {
-  "manifest": "0386b2e12edf3885d43bb5bb2c102c9d83a6e4fce232abde616376163cb60f07",
+  "manifest": "c01c3303abd9d33c170b0464de744f3b9bcd68db0800e032a9fb6182b6c6481c",
   "products": {
-    "classyplayer/classy": "d9724fa801e512dd2b4e06fbaef85dcbd03f08f792c2cc042f3cb236c7b7d6a2",
+    "classyplayer/classy": "21dad645b7b786f8f4493d66e418cefd98633b8214302885e97234151d3a6a3a",
     "fabianzettl/inniclassic": "dd7856922fc0bf2744631c93cf426f02bb0a22aac4ac6f1dfcd1d9973fdc19db",
     "ismileblue/y1_launcher": "d610a7003ec94de8f11518dfea761f5ca7f3e63d6376dfebfe750bb015717ca9",
     "jarvissax/rondo": "a30f094ab2d6f36ac2c4ca8d6cd11b08b560df75d39378021afd62792b79806d",
@@ -28,7 +28,7 @@
     "y1-community/updater-ce-neo": "c3c58251b3f505412ddf3299ff3f897e56a689fcebf0b3bb427f0a1e93d316d5"
   },
   "sources": {
-    "classyplayer/classy": "2aa14605e77dfa9beeee59e89c88d71060a0735c6da6da3502a6a4039aaf90f8",
+    "classyplayer/classy": "da14d587e65557de4b772fe472311f7e7b701a9e0ed1020f802075350219950c",
     "fabianzettl/inniclassic": "027b925155706c69175bbc1be9a30c1060edbe6b81362c431abcfa1640c5bcfd",
     "ismileblue/y1_launcher": "588b6bd35071ea3b3633be53385b8370da1f1a6c000adfa5431b7e8ad44436f7",
     "jarvissax/rondo": "25e0d604559076998de3eccdd04fb732dac6ed27dab7361129b2e307cf555367",
