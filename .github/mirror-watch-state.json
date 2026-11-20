@@ -24,8 +24,8 @@
     "y1-community/y2-ata-rom": "c220d1ec25013f985ece8f159d0ca942691712db3ea01c10f3f4982ec8f54963"
   },
   "seeds": {
-    "y1-community/innioasis-updater": "b5e23f0e1287a33d9e66ecb0eff3ae4648706d0cddf3e7ed2fd629855a021979",
-    "y1-community/updater-ce-neo": "262afb06c508686f1ec4794788818a90dad1b85cbb7e14c5025e7ea917a62dae"
+    "y1-community/innioasis-updater": "c6f605f2b3b4db900506c2c096d6cd1076db4ef2fc417c36525a5c4419e8f9e2",
+    "y1-community/updater-ce-neo": "aa8f18b3abaa0ac06de971ee12939162c89bb16d4b0c3ed35716a3d7db122359"
   },
   "sources": {
     "classyplayer/classy": "ae69d3265c69d215d45f4eed71a0844b4d99b89b69cb4d6f82729b8f29f756f5",
