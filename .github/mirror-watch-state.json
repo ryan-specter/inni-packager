@@ -24,11 +24,11 @@
     "y1-community/y2-ata-rom": "c220d1ec25013f985ece8f159d0ca942691712db3ea01c10f3f4982ec8f54963"
   },
   "seeds": {
-    "y1-community/innioasis-updater": "cac659dbaf3e779a48e9a065555a704d0f8175329313eea0a5d17818b59f7672",
-    "y1-community/updater-ce-neo": "c3c58251b3f505412ddf3299ff3f897e56a689fcebf0b3bb427f0a1e93d316d5"
+    "y1-community/innioasis-updater": "b5e23f0e1287a33d9e66ecb0eff3ae4648706d0cddf3e7ed2fd629855a021979",
+    "y1-community/updater-ce-neo": "262afb06c508686f1ec4794788818a90dad1b85cbb7e14c5025e7ea917a62dae"
   },
   "sources": {
-    "classyplayer/classy": "da14d587e65557de4b772fe472311f7e7b701a9e0ed1020f802075350219950c",
+    "classyplayer/classy": "ae69d3265c69d215d45f4eed71a0844b4d99b89b69cb4d6f82729b8f29f756f5",
     "fabianzettl/inniclassic": "027b925155706c69175bbc1be9a30c1060edbe6b81362c431abcfa1640c5bcfd",
     "ismileblue/y1_launcher": "588b6bd35071ea3b3633be53385b8370da1f1a6c000adfa5431b7e8ad44436f7",
     "jarvissax/rondo": "25e0d604559076998de3eccdd04fb732dac6ed27dab7361129b2e307cf555367",
