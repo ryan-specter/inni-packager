@@ -1,5 +1,5 @@
 {
-  "manifest": "c01c3303abd9d33c170b0464de744f3b9bcd68db0800e032a9fb6182b6c6481c",
+  "manifest": "b32bb46d4ba822d97a1bcbf5e8939059e078cff2da7545bb8c24cc958cbef7ea",
   "products": {
     "classyplayer/classy": "21dad645b7b786f8f4493d66e418cefd98633b8214302885e97234151d3a6a3a",
     "fabianzettl/inniclassic": "dd7856922fc0bf2744631c93cf426f02bb0a22aac4ac6f1dfcd1d9973fdc19db",
@@ -7,6 +7,7 @@
     "jarvissax/rondo": "a30f094ab2d6f36ac2c4ca8d6cd11b08b560df75d39378021afd62792b79806d",
     "leska1337/better-y": "e2ef21a2d7c867aebbd932b0b886e2c1a4024b23d3739a765b44600141d192a1",
     "noahdomingues/lithium": "31d3252482718f22e70965c65332bde184d033999b2d7cc93584a2773c1c515d",
+    "norocoral/nugget-y1": "a53d68fee93c3f08bc22bcd0d23ad7f6a41f9234805951e42a3d4e1e084af0fc",
     "rockbox-y1/rockbox": "63c4f4616b42322bc609eefc4ea123f507893d45fa5e9cd70f018ce34182be6c",
     "ryan-specter/koensayr-auto": "f91edc5583c7697e3fe805abebf669272bc7ea02bdb7d6c29a41957de13075bd",
     "schulzcode/y2linux": "3951c051e2c6d1f2728b5a3c6b35db76b91140ded96418aaf7684019fd369b25",
@@ -24,7 +25,7 @@
     "y1-community/y2-ata-rom": "c220d1ec25013f985ece8f159d0ca942691712db3ea01c10f3f4982ec8f54963"
   },
   "seeds": {
-    "y1-community/innioasis-updater": "188c285bf7c3f4ef1c0ef146b23b36ca730d1aa6f8b3a704d9a2f4098d0b36a2",
+    "y1-community/innioasis-updater": "032a7ba189128e646552d75d329d4ba0226ff67cc2bd1b912b9608773d32f158",
     "y1-community/updater-ce-neo": "aa8f18b3abaa0ac06de971ee12939162c89bb16d4b0c3ed35716a3d7db122359"
   },
   "sources": {
@@ -34,6 +35,7 @@
     "jarvissax/rondo": "25e0d604559076998de3eccdd04fb732dac6ed27dab7361129b2e307cf555367",
     "leska1337/better-y": "395a5749e07368d56e2b7396034d1f0a5c69e2885e57f78c8374f556e437a8fd",
     "noahdomingues/lithium": "cb6b60dacec1b378a0fbf8cd1cedc6b4bf3652ec10505f24ea38d78944727eda",
+    "norocoral/nugget-y1": "96a3a3ffa826539732c40948d1b06c4606c8b811ceffb9fb6875b4369b8393d2",
     "rockbox-y1/rockbox": "9785d7f130dc7b99a0f24420685cb77c1e4edb79928fe2993c38738dd1adf7bf",
     "ryan-specter/koensayr-auto": "7ae03122ff963950d9c40014b42ff894c3fceccd565e856b324ef69ff8d9e236",
     "schulzcode/y2linux": "7433e9fba7ef1f51bb21a47828ce4691b9dcc3fa22a1ab3d88b060f4a28d540c",
