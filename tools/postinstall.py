@@ -22,8 +22,25 @@ RAW_GITHUB = re.compile(
     r"^https?://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/(.+)$",
     re.IGNORECASE,
 )
-MARKDOWN_SUFFIXES = (".md", ".markdown", ".mdown")
+MARKDOWN_SUFFIXES = (".md", ".markdown", ".mdown", ".mkd")
 REQUEST_HEADERS = {"User-Agent": "inni-packager/1.0"}
+
+
+def post_install_viewer_url(url: str) -> str:
+    """Turn a Markdown file URL into an innioasis.app post-install reader URL."""
+    clean = str(url or "").strip()
+    if not clean:
+        return ""
+    if not _is_markdown(clean):
+        return clean
+    parts = urlparse(clean)
+    anchor = parts.fragment.lstrip("#")
+    base = clean.split("#")[0]
+    query_params = [("url", base)]
+    if anchor:
+        query_params.append(("anchor", anchor))
+    from urllib.parse import urlencode
+    return f"https://innioasis.app/post_install.html?{urlencode(query_params)}"
 
 
 @dataclass(frozen=True)
@@ -41,12 +58,16 @@ class PostInstall:
         if self.markdown:
             parts: List[str] = []
             for url, text in self.markdown:
-                parts.append(f"Source: {url}\n\n{text.strip()}\n")
+                viewer_link = post_install_viewer_url(url)
+                header = f"Source: {url}"
+                if viewer_link != url:
+                    header = f"Web guide (with translations): {viewer_link}\nSource: {url}"
+                parts.append(f"{header}\n\n{text.strip()}\n")
             linked = [url for url in self.urls if url not in {u for u, _ in self.markdown}]
             if linked:
                 parts.append(
                     "More information:\n"
-                    + "\n".join(f"- {url}" for url in linked)
+                    + "\n".join(f"- {post_install_viewer_url(url)}" for url in linked)
                     + "\n"
                 )
             return (
@@ -54,7 +75,7 @@ class PostInstall:
                 "\n\n---\n\n".join(parts).encode("utf-8"),
             )
         if len(self.urls) == 1:
-            url = self.urls[0]
+            url = post_install_viewer_url(self.urls[0])
             if platform_key == "windows":
                 return (
                     FILE_STEM + ".url",
@@ -85,15 +106,16 @@ class PostInstall:
             (
                 "After Install Steps\n"
                 "===================\n\n"
-                + "\n".join(f"- {url}" for url in self.urls)
+                + "\n".join(f"- {post_install_viewer_url(url)}" for url in self.urls)
                 + "\n"
             ).encode("utf-8"),
         )
 
 
 def _is_markdown(url: str) -> bool:
-    path = unquote(urlparse(url).path).lower()
-    return path.endswith(MARKDOWN_SUFFIXES)
+    clean = str(url or "").strip()
+    path = unquote(urlparse(clean).path).lower()
+    return path.endswith(MARKDOWN_SUFFIXES) or bool(GITHUB_BLOB.match(clean)) or bool(RAW_GITHUB.match(clean))
 
 
 def _download(url: str, timeout: int = 45) -> str:

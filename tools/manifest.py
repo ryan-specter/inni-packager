@@ -50,6 +50,10 @@ class ManifestPackage:
     device: str
     package_type: str
     post_install: str = ""
+    post_install2: str = ""
+    icon: str = ""
+    icon_dark: str = ""
+    image: str = ""
     derivative: str = ""
 
 
@@ -82,6 +86,23 @@ class Product:
         for package in self.packages:
             if package.post_install and package.post_install not in seen:
                 seen.append(package.post_install)
+        return seen
+
+    @property
+    def post_install2s(self) -> List[str]:
+        seen: List[str] = []
+        for package in self.packages:
+            if package.post_install2 and package.post_install2 not in seen:
+                seen.append(package.post_install2)
+        return seen
+
+    @property
+    def icons(self) -> List[str]:
+        seen: List[str] = []
+        for package in self.packages:
+            icon = package.icon or package.image
+            if icon and icon not in seen:
+                seen.append(icon)
         return seen
 
     @property
@@ -211,13 +232,28 @@ def _package_from_attributes(attributes: Mapping[str, str]) -> Optional[Manifest
     repo = (attributes.get("repo") or "").strip()
     if not REPO_RE.match(repo):
         return None
+    device = (attributes.get("device") or attributes.get("devices") or "").strip()
+    post_install = (attributes.get("post_install") or "").strip()
+    post_install2 = (
+        attributes.get("post_install2")
+        or attributes.get("post_install_2")
+        or ""
+    ).strip()
+    icon = (attributes.get("icon") or "").strip()
+    icon_dark = (attributes.get("icon_dark") or "").strip()
+    image = (attributes.get("image") or "").strip()
+    derivative = (attributes.get("derivative") or "").strip()
     return ManifestPackage(
         name=(attributes.get("name") or "").strip(),
         repo=repo,
-        device=(attributes.get("device") or "").strip(),
+        device=device,
         package_type="img",
-        post_install=(attributes.get("post_install") or "").strip(),
-        derivative=(attributes.get("derivative") or "").strip(),
+        post_install=post_install,
+        post_install2=post_install2,
+        icon=icon,
+        icon_dark=icon_dark,
+        image=image,
+        derivative=derivative,
     )
 
 
@@ -367,6 +403,31 @@ def post_installs_for_source(
     return seen
 
 
+def manifest_info_for_source(
+    source_repo: str, location: Optional[str] = None
+) -> Dict[str, Any]:
+    """Return icon and post-install links from manifest for one source repo."""
+    wanted = source_repo.strip().lower()
+    posts: List[str] = []
+    post2s: List[str] = []
+    icons: List[str] = []
+    for package in parse_manifest(fetch_manifest(location)):
+        if package.repo.lower() != wanted:
+            continue
+        if package.post_install and package.post_install not in posts:
+            posts.append(package.post_install)
+        if package.post_install2 and package.post_install2 not in post2s:
+            post2s.append(package.post_install2)
+        icon = package.icon or package.image
+        if icon and icon not in icons:
+            icons.append(icon)
+    return {
+        "post_install": posts,
+        "post_install2": post2s,
+        "icon": icons[0] if icons else "",
+    }
+
+
 def _mirror_name(source_repo: str, suffix: str, used: set) -> str:
     owner, name = source_repo.split("/", 1)
     slug = _SAFE_NAME.sub("-", name.lower()).strip("-._") or "firmware"
@@ -459,6 +520,8 @@ def product_config(
         "branch": branch,
         "updater_repo": updater_repo,
         "post_install": product.post_installs,
+        "post_install2": product.post_install2s,
+        "icon": product.icons[0] if product.icons else "",
         "title_prefix": title_prefix,
         "copy_original_assets": True,
         "source_readme": {

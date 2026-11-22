@@ -141,6 +141,20 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("description", text)
         self.assertTrue(text.endswith("\r\n"))
 
+    def test_ini_with_icon_and_post_install(self):
+        text = mirrorspec.fw_package_ini(
+            "Rondo",
+            "4.1.0",
+            "Y1",
+            "Stock",
+            icon="https://innioasis.app/assets/rondo_icon.jpg",
+            post_install="https://github.com/jarvissax/rondo/blob/main/docs/install.md#first-start",
+            post_install2="https://github.com/jarvissax/rondo/blob/main/docs/faq.md",
+        )
+        self.assertIn("icon = https://innioasis.app/assets/rondo_icon.jpg", text)
+        self.assertIn("post_install = https://github.com/jarvissax/rondo/blob/main/docs/install.md#first-start", text)
+        self.assertIn("post_install2 = https://github.com/jarvissax/rondo/blob/main/docs/faq.md", text)
+
     def test_release_version_uses_title_semver(self):
         self.assertEqual(
             mirrorspec.release_version("baseline-215", "Y2Linux 1.0 Beta 9.3.7"),

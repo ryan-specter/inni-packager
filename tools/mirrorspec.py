@@ -53,7 +53,9 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 # 16: a portable app published with a doubled archive suffix (for example
 #     UpdaterCE-Windows-Portable.zip.zip) still matches its platform, so
 #     repacks use the newest Updater CE payload instead of an older one.
-BUILDER_VERSION = 16
+# 17: pack updater.png/jpg/jpeg into portable packages and write icon, post_install,
+#     and post_install2 into fw_package.ini.
+BUILDER_VERSION = 17
 
 DEFAULT_BRANCH = "main"
 DEFAULT_TITLE_PREFIX = "Portable Flashing Package: "
@@ -261,6 +263,8 @@ class MirrorConfig:
     rules: List[Rule]
     platforms: List[Platform]
     post_installs: List[str] = field(default_factory=list)
+    post_install2s: List[str] = field(default_factory=list)
+    icon: str = ""
     readme_enabled: bool = True
     readme_path: str = DEFAULT_README_PATH
     readme_commit_message: str = DEFAULT_README_COMMIT
@@ -473,6 +477,11 @@ def load_config(
         post_installs=_as_list(
             raw.get("post_install", raw.get("post_installs")), "post_install"
         ),
+        post_install2s=_as_list(
+            raw.get("post_install2", raw.get("post_install_2", raw.get("post_install2s"))),
+            "post_install2",
+        ),
+        icon=str(raw.get("icon") or raw.get("image") or "").strip(),
         readme_enabled=readme_enabled,
         readme_path=readme_path,
         readme_commit_message=readme_commit_message,
@@ -571,6 +580,9 @@ def fw_package_ini(
     target_type: str,
     description: str = "",
     enabled: bool = True,
+    icon: str = "",
+    post_install: str = "",
+    post_install2: str = "",
 ) -> str:
     """Render the ``fw_package.ini`` that Updater CE reads next to a scatter."""
 
@@ -586,6 +598,9 @@ def fw_package_ini(
     add("target_model", target_model)
     add("target_type", target_type)
     add("description", description)
+    add("icon", icon)
+    add("post_install", post_install)
+    add("post_install2", post_install2)
     lines.append(f"enabled = {'true' if enabled else 'false'}")
     return "\r\n".join(lines) + "\r\n"
 

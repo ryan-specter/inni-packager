@@ -680,6 +680,28 @@ class PackagerTests(unittest.TestCase):
             self.assertNotIn("/", history.replace("[LastDAFilePath]", "").replace("[RecentOpenFile]", "").replace("@Invalid()", ""))
             self.assertNotIn("\\", history.replace("[LastDAFilePath]", "").replace("[RecentOpenFile]", "").replace("@Invalid()", ""))
 
+    def test_image_packed_at_root_and_subfolder(self):
+        out = self.tmp / "with-image-windows.zip"
+        image_bytes = b"\x89PNG\r\n\x1a\nfake image data"
+        build_portable_package(
+            self.windows_tool,
+            inspect_firmware(self.firmware),
+            self.cfg.platform("windows"),
+            out,
+            self.ini,
+            "Rondo",
+            "4.1.0",
+            "rom.zip",
+            image_name="updater.png",
+            image_data=image_bytes,
+        )
+        names = names_of(out)
+        self.assertIn("updater.png", names)
+        self.assertIn("SP_Flash_Tool/updater.png", names)
+        with zipfile.ZipFile(out) as archive:
+            self.assertEqual(archive.read("updater.png"), image_bytes)
+            self.assertEqual(archive.read("SP_Flash_Tool/updater.png"), image_bytes)
+
     def test_macos_metadata_is_not_packed_for_windows_or_linux(self):
         for key in ("windows", "linux"):
             out = self.tmp / f"metadata-{key}.zip"

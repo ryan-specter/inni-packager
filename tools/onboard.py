@@ -179,6 +179,8 @@ def _package_signature_rows(
             package.device.upper(),
             package.package_type,
             package.post_install,
+            package.post_install2,
+            package.icon,
             package.derivative,
         )
         for package in packages

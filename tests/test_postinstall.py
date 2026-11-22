@@ -46,6 +46,22 @@ class PostInstallTests(unittest.TestCase):
         self.assertIsNone(postinstall.resolve([], FakeGitHub("")))
         self.assertIsNone(postinstall.PostInstall(()).render("windows"))
 
+    def test_post_install_viewer_url(self):
+        url = "https://github.com/jarvissax/rondo/blob/main/docs/install.md#first-start"
+        viewer = postinstall.post_install_viewer_url(url)
+        self.assertEqual(
+            viewer,
+            "https://innioasis.app/post_install.html?url=https%3A%2F%2Fgithub.com%2Fjarvissax%2Frondo%2Fblob%2Fmain%2Fdocs%2Finstall.md&anchor=first-start",
+        )
+        raw_url = "https://raw.githubusercontent.com/owner/repo/main/README.md"
+        viewer2 = postinstall.post_install_viewer_url(raw_url)
+        self.assertEqual(
+            viewer2,
+            "https://innioasis.app/post_install.html?url=https%3A%2F%2Fraw.githubusercontent.com%2Fowner%2Frepo%2Fmain%2FREADME.md",
+        )
+        web_url = "https://innioasis.app/y2reborn_wifibt.html"
+        self.assertEqual(postinstall.post_install_viewer_url(web_url), web_url)
+
 
 if __name__ == "__main__":
     unittest.main()

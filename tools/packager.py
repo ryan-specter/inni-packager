@@ -765,6 +765,8 @@ def build_portable_package(
     target_type: str = "",
     driver_path: Optional[Path] = None,
     omit_images: Sequence[str] = (),
+    image_name: str = "",
+    image_data: bytes = b"",
 ) -> BuildResult:
     """Write one portable package and return its metadata."""
 
@@ -943,6 +945,21 @@ def build_portable_package(
                     f"unsafe post-install filename: {post_install_name!r}"
                 )
             extra_files[clean_post] = post_install_data
+
+        if image_name and image_data:
+            clean_image = _safe_name(image_name)
+            if (
+                clean_image
+                and not clean_image.endswith("/")
+                and "/" not in clean_image
+            ):
+                extra_files[clean_image] = image_data
+                if platform.layout == "sp_flash_tool":
+                    extra_files[dest_prefix + clean_image] = image_data
+                elif dmg_layout:
+                    extra_files[MAC_DMG_FIRMWARE_DIR + "/" + clean_image] = image_data
+                elif mac_layout:
+                    extra_files[MAC_FIRMWARE_DIR + "/" + clean_image] = image_data
 
         overrides = {name.lower() for name in extra_files}
         overrides.update(dest.lower() for _, dest, _ in firmware_dests)

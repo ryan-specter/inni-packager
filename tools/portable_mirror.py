@@ -28,6 +28,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+import urllib.parse
+import urllib.request
 from urllib.parse import quote
 
 import postinstall
@@ -754,6 +756,48 @@ def resolve_post_install_for(
     return postinstall.resolve(urls, gh, log=log)
 
 
+def resolve_release_icon(
+    cfg: MirrorConfig,
+    source_assets: Sequence[Mapping[str, Any]],
+    gh: GitHub,
+    work_dir: Path,
+    log: Log,
+) -> Tuple[str, bytes, str]:
+    """Find and download updater image from release assets or cfg.icon.
+
+    Returns (image_name, image_data, icon_url).
+    """
+    image_names = ("updater.png", "updater.jpg", "updater.jpeg")
+    for asset in source_assets:
+        aname = str(asset.get("name") or "")
+        if aname.lower() in image_names:
+            try:
+                dest = work_dir / aname
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                downloaded = gh.download(cfg.source_repo, asset, dest, log=log)
+                data = downloaded.read_bytes()
+                url = str(asset.get("browser_download_url") or "")
+                return aname, data, url
+            except Exception as exc:
+                log(f"  warning: failed to download release icon {aname}: {exc}")
+
+    if cfg.icon:
+        try:
+            req = urllib.request.Request(
+                cfg.icon, headers={"User-Agent": "inni-packager/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
+            ext = Path(urllib.parse.urlparse(cfg.icon).path).suffix.lower()
+            name = f"updater{ext}" if ext in (".png", ".jpg", ".jpeg") else "updater.png"
+            return name, data, cfg.icon
+        except Exception as exc:
+            log(f"  warning: failed to fetch icon from {cfg.icon}: {exc}")
+            return "", b"", cfg.icon
+
+    return "", b"", ""
+
+
 def download_release_asset(
     cfg: MirrorConfig, gh: GitHub, asset: Mapping[str, Any], directory: Path, log: Log
 ) -> Path:
@@ -993,6 +1037,11 @@ def build_for_release(
         meta_by_source[str(asset["name"])] = resolve_metadata(
             cfg, str(asset["name"])
         )
+    icon_name, icon_data, icon_url = resolve_release_icon(
+        cfg, source_assets, gh, work / tag / "icon", log
+    )
+    post_install_url = cfg.post_installs[0] if cfg.post_installs else ""
+    post_install2_url = cfg.post_install2s[0] if cfg.post_install2s else ""
     for asset, _path, package in firmware:
         meta = meta_by_source[str(asset["name"])]
         ini_text = fw_package_ini(
@@ -1001,6 +1050,9 @@ def build_for_release(
             target_model=meta["target_model"],
             target_type=meta["target_type"],
             description=meta["description"] or str(release.get("name") or ""),
+            icon=icon_url,
+            post_install=post_install_url,
+            post_install2=post_install2_url,
         )
         for platform in cfg.platforms:
             if platform.key not in updater or platform.key not in rebuild:
@@ -1042,6 +1094,8 @@ def build_for_release(
             target_type=meta["target_type"],
             driver_path=ensure_driver(platform.key) if ensure_driver else None,
             omit_images=configured_omit_images(cfg),
+            image_name=icon_name,
+            image_data=icon_data,
         )
 
     with ThreadPoolExecutor(max_workers=cfg.build_workers) as pool:
@@ -1765,6 +1819,11 @@ def build_only(args) -> int:
     try:
         updater_paths = download_updater_files(cfg, gh, updater, work, log)
         candidates = select_firmware_assets(release.get("assets") or [], cfg)
+        icon_name, icon_data, icon_url = resolve_release_icon(
+            cfg, release.get("assets") or [], gh, work / tag / "icon", log
+        )
+        post_install_url = cfg.post_installs[0] if cfg.post_installs else ""
+        post_install2_url = cfg.post_install2s[0] if cfg.post_install2s else ""
         for asset in candidates:
             path = download_release_asset(cfg, gh, asset, work / "src", log)
             package = inspect_firmware(
@@ -1782,6 +1841,9 @@ def build_only(args) -> int:
                 meta["target_model"],
                 meta["target_type"],
                 meta["description"] or str(release.get("name") or ""),
+                icon=icon_url,
+                post_install=post_install_url,
+                post_install2=post_install2_url,
             )
             for platform in cfg.platforms:
                 if platform.key not in updater_paths:
@@ -1806,6 +1868,8 @@ def build_only(args) -> int:
                     target_type=meta["target_type"],
                     driver_path=updater_paths.get(platform.key + "::driver"),
                     omit_images=configured_omit_images(cfg),
+                    image_name=icon_name,
+                    image_data=icon_data,
                 )
                 manifest["outputs"].append(
                     {
