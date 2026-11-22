@@ -781,6 +781,17 @@ def resolve_release_icon(
             except Exception as exc:
                 log(f"  warning: failed to download release icon {aname}: {exc}")
 
+    if not cfg.icon:
+        try:
+            from manifest import manifest_info_for_source
+            info = manifest_info_for_source(cfg.source_repo)
+            if info.get("icon"):
+                cfg.icon = info["icon"]
+            if not cfg.post_install2s and info.get("post_install2"):
+                cfg.post_install2s = info["post_install2"]
+        except Exception as exc:
+            log(f"  warning: could not read manifest info for {cfg.source_repo}: {exc}")
+
     if cfg.icon:
         try:
             req = urllib.request.Request(
