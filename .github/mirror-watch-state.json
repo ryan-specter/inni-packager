@@ -26,10 +26,10 @@
   },
   "seeds": {
     "y1-community/innioasis-updater": "032a7ba189128e646552d75d329d4ba0226ff67cc2bd1b912b9608773d32f158",
-    "y1-community/updater-ce-neo": "2c39efe3651f95649322a6a374fe4f67bf8d4204f1ffdcbe0a1fee4501f20fbd"
+    "y1-community/updater-ce-neo": "69585132ba26e45b8e1bb1fa1c8cb20af16e89da9363f55b7d9b0c8626070b51"
   },
   "sources": {
-    "classyplayer/classy": "ae69d3265c69d215d45f4eed71a0844b4d99b89b69cb4d6f82729b8f29f756f5",
+    "classyplayer/classy": "69b29ff43a03ba138131c3d8895d0806dca9e8ff57c129eadae22f47b72b61ad",
     "fabianzettl/inniclassic": "027b925155706c69175bbc1be9a30c1060edbe6b81362c431abcfa1640c5bcfd",
     "ismileblue/y1_launcher": "588b6bd35071ea3b3633be53385b8370da1f1a6c000adfa5431b7e8ad44436f7",
     "jarvissax/rondo": "bb61cf7f85236cdcec03412cd34e8e7170bbf26dcac40229c1233028550a02fe",
