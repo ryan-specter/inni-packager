@@ -200,7 +200,22 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git commit -m "Update portable package index"
-            git push || { git pull --rebase --autostash && git push; }
+            branch="$(git branch --show-current || echo main)"
+            pushed=0
+            for _ in 1 2 3 4 5; do
+              if git push origin "$branch"; then
+                pushed=1
+                break
+              fi
+              sleep $((RANDOM % 3 + 1))
+              git fetch origin "$branch"
+              git reset "origin/$branch"
+              git add -f index.json
+              git commit -m "Update portable package index" || true
+            done
+            if [ "$pushed" -ne 1 ]; then
+              git push origin "$branch"
+            fi
           else
             echo "index.json is unchanged"
           fi
@@ -257,7 +272,22 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git commit -m "Update portable package index"
-            git push || { git pull --rebase --autostash && git push; }
+            branch="$(git branch --show-current || echo main)"
+            pushed=0
+            for _ in 1 2 3 4 5; do
+              if git push origin "$branch"; then
+                pushed=1
+                break
+              fi
+              sleep $((RANDOM % 3 + 1))
+              git fetch origin "$branch"
+              git reset "origin/$branch"
+              git add -f index.json
+              git commit -m "Update portable package index" || true
+            done
+            if [ "$pushed" -ne 1 ]; then
+              git push origin "$branch"
+            fi
           else
             echo "index.json is unchanged"
           fi
