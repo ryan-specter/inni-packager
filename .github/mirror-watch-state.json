@@ -1,5 +1,5 @@
 {
-  "manifest": "6627c37c193e112144a8627ad6adf8dc9d6e942bae3bf97f334034110199b464",
+  "manifest": "a49d2d73a6e9be3d2494757843adf0f6d3d1004d9c2c0145806318d6debfa6fd",
   "products": {
     "classyplayer/classy": "ad5a605747f5a3dd05a2a52262da0288e28be7f5c7062638a5500a52e43d1b0c",
     "fabianzettl/inniclassic": "616913dd81991696ec3f62580140bba034b5c21e1a3da25181a650b800d652d7",
@@ -13,7 +13,7 @@
     "schulzcode/y2linux": "c9d7199ec97d6206572a67462d75c27ab7f6de46b3af204031f3afec1b2bee14",
     "schulzcode/y2player": "13b1270b44206f4b87ef6218f7057d2e67c166714cbd75599dbf7294f14b0321",
     "spycemagic/y2-rockbox": "9352f8ec565c2c208157e494bcf6aeec760ee326c8e9e0279f27cc6c213b5d43",
-    "thesolarproject/solar": "75ef9b2ba75efeeddd1b2c2b25d4f24cd08358d50afef34ce01d1aa93a5c01e7",
+    "thesolarproject/solar": "c288b139be420c542ee6cf619295237d1a2bc88a5e93da6139ea256383957185",
     "y1-community/g1-stock-rom": "2e43be20ba90802453bf345e5d2f9b23c54d91304462b4002c0eefde9d07459a",
     "y1-community/g3-stock-rom": "aa4bd331f76a6956a1fd38bbca7099f763f7e616b77eb69b00f0d67764edfcb9",
     "y1-community/g5-stock-rom": "1c890551f1a7fec42d8d8f20c28909eb615227159584706f2f82b0209b04053d",
@@ -25,14 +25,14 @@
     "y1-community/y2-ata-rom": "b8b6eb4e0b62075bce6de5e6316fbd073e8b68c2582cc6fe63dab7f04a2075a7"
   },
   "seeds": {
-    "y1-community/innioasis-updater": "3b9eea387c56ceee9278dd6dcb70b903a783f9a42ee19b955a74d5ce295913f5",
-    "y1-community/updater-ce-neo": "4c6ed004244e97c32d2639285efcb7180db68aa0fcb5f679328e6528fde4966c"
+    "y1-community/innioasis-updater": "d2eb5ee18273c559a17f9889b71f3738d10276ce8da4d688b921c9575f08aaa8",
+    "y1-community/updater-ce-neo": "cbfa8c3d37c013475cf11c8cb8b013088dba330aaf2c53b290431544333a5eba"
   },
   "sources": {
-    "classyplayer/classy": "b28984c9e9501f7f9d7d87bbcbf09b56fe5b989078a512a31036eeecb5c274c5",
-    "fabianzettl/inniclassic": "40b630fc5f2c05c0b326b6f3e8129844d31545ff063368a4d8d696bb2526f6ea",
+    "classyplayer/classy": "378dd12a73b60a0f00f9f64fa0acdebf475a7e030721542b22a5877534c59609",
+    "fabianzettl/inniclassic": "18003f3124f6f39bd2ae050d885c7361abf61ea0ef2a30edf6334927cb08f1f5",
     "ismileblue/y1_launcher": "588b6bd35071ea3b3633be53385b8370da1f1a6c000adfa5431b7e8ad44436f7",
-    "jarvissax/rondo": "db7323c3b1f64cf0aaf9c58eecf9ef8aa4b1e6edab03dd5e39e447fb8f5af67c",
+    "jarvissax/rondo": "51f05201e739368361e8cca0838082be0d0d808dad50650ad096253199252011",
     "leska1337/better-y": "395a5749e07368d56e2b7396034d1f0a5c69e2885e57f78c8374f556e437a8fd",
     "noahdomingues/lithium": "cb6b60dacec1b378a0fbf8cd1cedc6b4bf3652ec10505f24ea38d78944727eda",
     "norocoral/nugget-y1": "bb74e6100487443285c5eb94cf7b12cb18324187a78daa168b22a4ded431846c",
@@ -41,7 +41,7 @@
     "schulzcode/y2linux": "b2e9732a126e0533ecb77c6b06b90fdd3c8734c8085e21bb4e48f1d5233c711d",
     "schulzcode/y2player": "4dd8d2c5e7e7ffcd1132ec4cd5bb2a2b2e54fc9eb7a57c219c73a811d96ead97",
     "spycemagic/y2-rockbox": "df59883b877adc749809052f37a24cfd0a0434f8a3c679884d32d8ba87aa7a49",
-    "thesolarproject/solar": "135265ca8ae34cde662084df150d75a383005886029feebbbb9ef08eaf9c4321",
+    "thesolarproject/solar": "18e05f232926e5f738e8ceb4b0cdc86bfb81f677723a93500d4d33979473c949",
     "y1-community/g1-stock-rom": "65ed4ac33f4074502c0dadf9e07052d7a79fae1dedaf6551d12a2aac674b1d2e",
     "y1-community/g3-stock-rom": "dacb290e688adb8011ba42e77991f77350643770ba25d285fc6d6beda5f68ac9",
     "y1-community/g5-stock-rom": "f29578155da03aa7457bc741b593f00b4df9022737a9a3cc80478c3925895466",
