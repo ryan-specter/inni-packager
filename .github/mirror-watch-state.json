@@ -29,7 +29,7 @@
     "y1-community/updater-ce-neo": "cbfa8c3d37c013475cf11c8cb8b013088dba330aaf2c53b290431544333a5eba"
   },
   "sources": {
-    "classyplayer/classy": "b9048310110adddd0e55e42f122fd29a48c50e3663caa418c29a3f6ee41da0b0",
+    "classyplayer/classy": "913c62bacd258da828753754d8959e9466c61db8a4367096c83044945c8fde30",
     "fabianzettl/inniclassic": "18003f3124f6f39bd2ae050d885c7361abf61ea0ef2a30edf6334927cb08f1f5",
     "ismileblue/y1_launcher": "588b6bd35071ea3b3633be53385b8370da1f1a6c000adfa5431b7e8ad44436f7",
     "jarvissax/rondo": "6328ac65b015623595fa666ce8e836114117a8b796637ce56d95751ba2e5e159",
@@ -38,10 +38,10 @@
     "norocoral/nugget-y1": "bb74e6100487443285c5eb94cf7b12cb18324187a78daa168b22a4ded431846c",
     "rockbox-y1/rockbox": "9785d7f130dc7b99a0f24420685cb77c1e4edb79928fe2993c38738dd1adf7bf",
     "ryan-specter/koensayr-auto": "7ae03122ff963950d9c40014b42ff894c3fceccd565e856b324ef69ff8d9e236",
-    "schulzcode/y2linux": "97b0b67f3c582e3773a9e31776815ae4b9e9b18878d93b74a38991a55567dd6e",
+    "schulzcode/y2linux": "0d0b598a17eb1eca2f024570fff7563d5687fc20cdf2cbf88f1d5e158aebaaa0",
     "schulzcode/y2player": "4dd8d2c5e7e7ffcd1132ec4cd5bb2a2b2e54fc9eb7a57c219c73a811d96ead97",
     "spycemagic/y2-rockbox": "df59883b877adc749809052f37a24cfd0a0434f8a3c679884d32d8ba87aa7a49",
-    "thesolarproject/solar": "506f48da7af1181b58f73f98901051a18d4b3cd95fb906e4fc03617615754cbb",
+    "thesolarproject/solar": "3b71dccf26d76610d38b6864775b8e387749007838e59ecc4cb12bed23934437",
     "y1-community/g1-stock-rom": "65ed4ac33f4074502c0dadf9e07052d7a79fae1dedaf6551d12a2aac674b1d2e",
     "y1-community/g3-stock-rom": "dacb290e688adb8011ba42e77991f77350643770ba25d285fc6d6beda5f68ac9",
     "y1-community/g5-stock-rom": "f29578155da03aa7457bc741b593f00b4df9022737a9a3cc80478c3925895466",
